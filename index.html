@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>簡易記帳</title>
+    <!-- 引入 Tailwind CSS 快速排版 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Vue.js 處理財務邏輯 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f2f2f7; user-select: none; }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .safe-top { padding-top: env(safe-area-inset-top); }
+        /* 隱藏捲軸但可滾動 */
+        ::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="text-gray-900 h-screen flex flex-col overflow-hidden">
+    <div id="app" class="h-full flex flex-col w-full max-w-md mx-auto bg-white sm:bg-gray-100 shadow-lg relative">
+        
+        <!-- 主要內容區 -->
+        <main class="flex-1 overflow-y-auto safe-top pb-24 bg-[#f2f2f7]">
+            
+            <!-- ====== 首頁 Dashboard ====== -->
+            <div v-show="currentTab === 'home'" class="p-4 space-y-4">
+                <h1 class="text-2xl font-bold text-center mt-2">{{ currentMonthString }}</h1>
+                
+                <!-- 財務總覽卡片 -->
+                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+                    <h2 class="text-lg font-bold text-gray-800">財務總覽</h2>
+                    <hr class="border-gray-100">
+                    
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-500">💰 本月收入</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(income) }}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-500">💳 信用卡已消費</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(cardSpent) }}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-500">💳 本月待繳卡費</span>
+                        <span class="font-bold" :class="cardDue > 0 ? 'text-red-500' : 'text-green-500'">{{ formatMoney(cardDue) }}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-500">🏠 固定支出</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(fixedExpenses) }}</span>
+                    </div>
+                    
+                    <hr class="border-gray-100">
+                    
+                    <div class="flex justify-between items-center text-lg">
+                        <span class="font-bold text-gray-800">🍚 生活費剩餘</span>
+                        <span class="font-bold" :class="livingRemaining < 0 ? 'text-red-600' : 'text-green-600'">{{ formatMoney(livingRemaining) }}</span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center bg-blue-50 rounded-xl p-3 mt-2">
+                        <span class="text-xs text-blue-600 font-medium">📅 今日平均可用 (剩 {{ daysLeft }} 天)</span>
+                        <span class="text-xl font-black text-blue-700">{{ formatMoney(todayAverage) }}</span>
+                    </div>
+                </div>
+
+                <!-- 預算進度卡片 -->
+                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+                    <div class="flex justify-between text-sm">
+                        <span class="font-bold text-gray-700">生活費預算使用率</span>
+                        <span class="font-bold text-gray-700">{{ expensePercentage }}%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-3">
+                        <div class="h-3 rounded-full transition-all duration-500" 
+                             :class="expensePercentage > 80 ? 'bg-red-500' : 'bg-green-500'" 
+                             :style="`width: ${Math.min(expensePercentage, 100)}%`"></div>
+                    </div>
+                    <p v-if="expensePercentage > 80" class="text-xs text-red-500 font-medium">⚠️ 警告：本月生活費已使用超過 80%</p>
+                </div>
+            </div>
+
+            <!-- ====== 記帳頁面 ====== -->
+            <div v-show="currentTab === 'add'" class="p-4 space-y-4">
+                <h1 class="text-2xl font-bold mt-2 mb-4">記一筆</h1>
+                
+                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
+                    <!-- 類型選擇 -->
+                    <div class="flex p-1 bg-gray-100 rounded-lg">
+                        <button v-for="type in types" :key="type" 
+                                @click="form.type = type"
+                                class="flex-1 py-2 text-sm font-medium rounded-md transition-colors"
+                                :class="form.type === type ? 'bg-white shadow text-black' : 'text-gray-500'">
+                            {{ type }}
+                        </button>
+                    </div>
+
+                    <!-- 金額輸入 -->
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">金額</label>
+                        <input type="number" inputmode="decimal" v-model="form.amount" placeholder="0" 
+                               class="w-full text-4xl font-bold bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <!-- 支出專用欄位 -->
+                    <template v-if="form.type === '支出'">
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">分類</label>
+                            <div class="grid grid-cols-4 gap-2">
+                                <button v-for="cat in categories" :key="cat" @click="form.category = cat"
+                                        class="p-2 text-xs rounded-lg border transition-colors"
+                                        :class="form.category === cat ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 text-gray-600'">
+                                    {{ cat }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">支付方式</label>
+                            <div class="flex gap-2">
+                                <button v-for="method in methods" :key="method" @click="form.method = method"
+                                        class="flex-1 py-2 text-sm rounded-lg border transition-colors"
+                                        :class="form.method === method ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'bg-white border-gray-200 text-gray-600'">
+                                    {{ method }}
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- 備註 -->
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">備註 (選填)</label>
+                        <input type="text" v-model="form.note" placeholder="例如：跟朋友聚餐" 
+                               class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <button @click="saveTransaction" 
+                            class="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl shadow-md active:bg-blue-700 transition-colors">
+                        儲存紀錄
+                    </button>
+                </div>
+            </div>
+
+            <!-- ====== 明細清單 ====== -->
+            <div v-show="currentTab === 'list'" class="p-4 space-y-4">
+                <h1 class="text-2xl font-bold mt-2 mb-4">交易紀錄</h1>
+                <div class="bg-white rounded-2xl p-2 shadow-sm">
+                    <div v-if="transactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
+                    
+                    <div v-for="t in sortedTransactions" :key="t.id" class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0">
+                        <div class="flex flex-col">
+                            <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : t.type }}</span>
+                            <span class="text-xs text-gray-500">{{ formatDate(t.date) }} • {{ t.method || '-' }} {{ t.note ? '• '+t.note : '' }}</span>
+                        </div>
+                        <span class="font-bold" :class="t.type === '支出' ? 'text-gray-800' : (t.type === '收入' ? 'text-green-500' : 'text-blue-500')">
+                            {{ t.type === '支出' ? '-' : '+' }} {{ formatMoney(t.amount) }}
+                        </span>
+                    </div>
+                </div>
+                <!-- 刪除所有資料（測試用） -->
+                <button @click="clearData" class="w-full py-4 text-red-400 text-sm mt-4">清空所有本機資料</button>
+            </div>
+            
+        </main>
+
+        <!-- ====== 底部導航列 ====== -->
+        <nav class="absolute bottom-0 w-full bg-white border-t border-gray-200 safe-bottom">
+            <div class="flex justify-around items-center h-16">
+                <button @click="currentTab = 'home'" class="flex-1 flex flex-col items-center justify-center space-y-1" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
+                    <span class="text-xl">🏠</span>
+                    <span class="text-[10px] font-medium">總覽</span>
+                </button>
+                <div class="flex-1 flex justify-center items-center">
+                    <button @click="currentTab = 'add'" class="w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform -translate-y-4 border-4 border-white">
+                        <span class="text-2xl font-bold">+</span>
+                    </button>
+                </div>
+                <button @click="currentTab = 'list'" class="flex-1 flex flex-col items-center justify-center space-y-1" :class="currentTab === 'list' ? 'text-blue-600' : 'text-gray-400'">
+                    <span class="text-xl">📋</span>
+                    <span class="text-[10px] font-medium">明細</span>
+                </button>
+            </div>
+        </nav>
+    </div>
+
+    <!-- 財務邏輯 -->
+    <script>
+        const { createApp, ref, computed, watch, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const currentTab = ref('home');
+                const transactions = ref([]);
+                const income = ref(67000); // 預設月收入
+                const fixedExpenses = ref(40000); // 預設固定支出
+                
+                // 表單狀態
+                const types = ['支出', '收入', '卡費繳款'];
+                const categories = ['🍚 餐飲', '🛒 日用', '🚗 交通', '🎮 娛樂', '🛍 購物', '👨‍👩‍👧 家庭', '🏠 房租', '📦 其他'];
+                const methods = ['現金', '信用卡', '轉帳'];
+                
+                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '' });
+
+                // ----- 核心計算邏輯 -----
+                const livingBudget = computed(() => income.value - fixedExpenses.value);
+                
+                // 一般生活花費 (排除卡費繳款)
+                const livingExpenses = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '支出')
+                        .reduce((sum, t) => sum + t.amount, 0);
+                });
+
+                const livingRemaining = computed(() => livingBudget.value - livingExpenses.value);
+                
+                // 信用卡邏輯 (分開計算)
+                const cardSpent = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '支出' && t.method === '信用卡')
+                        .reduce((sum, t) => sum + t.amount, 0);
+                });
+                
+                const cardPaid = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '卡費繳款')
+                        .reduce((sum, t) => sum + t.amount, 0);
+                });
+                
+                const cardDue = computed(() => Math.max(cardSpent.value - cardPaid.value, 0));
+
+                // 日期計算
+                const daysLeft = computed(() => {
+                    const today = new Date();
+                    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+                    return Math.max(lastDay - today.getDate() + 1, 1);
+                });
+
+                const todayAverage = computed(() => livingRemaining.value / daysLeft.value);
+                const expensePercentage = computed(() => {
+                    if(livingBudget.value <= 0) return 0;
+                    return ((livingExpenses.value / livingBudget.value) * 100).toFixed(1);
+                });
+
+                const currentMonthString = computed(() => {
+                    const d = new Date();
+                    return `${d.getFullYear()}年${d.getMonth() + 1}月財務狀況`;
+                });
+
+                const sortedTransactions = computed(() => {
+                    return [...transactions.value].sort((a, b) => b.id - a.id); // 最新在前
+                });
+
+                // ----- 方法 -----
+                const formatMoney = (num) => {
+                    return '$' + Number(Math.round(num)).toLocaleString();
+                };
+                
+                const formatDate = (isoString) => {
+                    const d = new Date(isoString);
+                    return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+                };
+
+                const saveTransaction = () => {
+                    if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
+                    
+                    transactions.value.push({
+                        id: Date.now(),
+                        type: form.value.type,
+                        amount: Number(form.value.amount),
+                        category: form.value.category,
+                        method: form.value.type === '支出' ? form.value.method : null,
+                        note: form.value.note,
+                        date: new Date().toISOString()
+                    });
+                    
+                    // 重置表單並回首頁
+                    form.value.amount = '';
+                    form.value.note = '';
+                    currentTab.value = 'home';
+                };
+
+                const clearData = () => {
+                    if(confirm('確定要清空所有紀錄嗎？')) {
+                        transactions.value = [];
+                        localStorage.removeItem('moneyApp_data');
+                    }
+                };
+
+                // ----- 本機儲存 (LocalStorage) -----
+                watch(transactions, (newVal) => {
+                    localStorage.setItem('moneyApp_data', JSON.stringify(newVal));
+                }, { deep: true });
+
+                onMounted(() => {
+                    const saved = localStorage.getItem('moneyApp_data');
+                    if (saved) {
+                        transactions.value = JSON.parse(saved);
+                    }
+                });
+
+                return { currentTab, transactions, income, fixedExpenses, form, types, categories, methods,
+                         livingRemaining, cardSpent, cardDue, todayAverage, daysLeft, expensePercentage, currentMonthString,
+                         sortedTransactions, formatMoney, formatDate, saveTransaction, clearData };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,813 +1,754 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>簡易記帳</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f2f2f7; user-select: none; }
-        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-        .safe-top { padding-top: env(safe-area-inset-top); }
-        ::-webkit-scrollbar { display: none; }
-        input[type="text"], input[type="number"], input[type="date"], select { font-size: 16px; }
-        [v-cloak] { display: none !important; }
-    </style>
-</head>
-<body class="text-gray-900 h-screen flex flex-col overflow-hidden">
-    <div id="app" v-cloak class="h-full flex flex-col w-full max-w-md mx-auto bg-[#f2f2f7] shadow-lg relative">
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "firebase/firestore";
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'finance-app-id';
+const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+
+let app, db, auth;
+if (firebaseConfigStr) {
+  try {
+    const config = JSON.parse(firebaseConfigStr);
+    app = initializeApp(config);
+    db = getFirestore(app);
+    auth = getAuth(app);
+  } catch (e) {
+    console.error("Firebase 初始化失敗:", e);
+  }
+}
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [cards, setCards] = useState([
+    { id: 'card-1', name: '預設信用卡' }
+  ]);
+  const [budgetAmount, setBudgetAmount] = useState(15000);
+  
+  const [isSyncing, setIsSyncing] = useState(true);
+  const [isConnected, setIsConnected] = useState(false);
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showCardInput, setShowCardInput] = useState(false);
+  const [newCardName, setNewCardName] = useState('');
+  
+  const [timeRange, setTimeRange] = useState('thisMonth'); 
+  const [activeView, setActiveView] = useState('list'); 
+
+  const [addType, setAddType] = useState('expense'); 
+  const [recordDate, setRecordDate] = useState(''); 
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [category, setCategory] = useState('飲食');
+  const [paymentMethod, setPaymentMethod] = useState('cash'); 
+  const [deductBudget, setDeductBudget] = useState(true);
+  const [editingRecordId, setEditingRecordId] = useState(null);
+  
+  const [isInstallment, setIsInstallment] = useState(false);
+  const [installmentMonths, setInstallmentMonths] = useState(3);
+
+  const expenseCategories = ['飲食', '交通', '購物', '娛樂', '居住', '其他'];
+  const incomeCategories = ['薪水', '投資', '獎金', '其他'];
+  
+  const categoryColors = {
+    '飲食': 'bg-orange-400',
+    '交通': 'bg-blue-400',
+    '購物': 'bg-pink-400',
+    '娛樂': 'bg-purple-400',
+    '居住': 'bg-teal-400',
+    '其他': 'bg-gray-400'
+  };
+
+  useEffect(() => {
+    const metaTheme = document.createElement('meta');
+    metaTheme.name = 'theme-color';
+    metaTheme.content = '#059669'; 
+    document.head.appendChild(metaTheme);
+
+    // 優先從本地快取撈取資料，確保舊資料不會因為重整或升級消失
+    try {
+      const savedRecords = localStorage.getItem('finance_records_backup');
+      const savedCards = localStorage.getItem('finance_cards_backup');
+      const savedBudget = localStorage.getItem('finance_budget_backup');
+      if (savedRecords) setRecords(JSON.parse(savedRecords));
+      if (savedCards) setCards(JSON.parse(savedCards));
+      if (savedBudget) setBudgetAmount(Number(savedBudget));
+    } catch (e) {
+      console.error("讀取本地快取失敗", e);
+    }
+
+    if (!auth) {
+      setTimeout(() => {
+        setIsSyncing(false);
+        setIsConnected(false);
+      }, 800);
+      return;
+    }
+
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("登入錯誤:", error);
+        setIsSyncing(false);
+      }
+    };
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) setIsSyncing(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user || !db) return;
+    const userId = user.uid;
+
+    const configRef = doc(db, 'artifacts', appId, 'users', userId, 'finance_config', 'main');
+    const unsubConfig = onSnapshot(configRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.cards && data.cards.length > 0) setCards(data.cards);
+        if (data.budgetAmount !== undefined) setBudgetAmount(data.budgetAmount);
+      }
+    }, (err) => console.error("同步設定錯誤:", err));
+
+    const recordsRef = collection(db, 'artifacts', appId, 'users', userId, 'finance_records');
+    const unsubRecords = onSnapshot(recordsRef, (snapshot) => {
+      const fetchedRecords = snapshot.docs.map(d => d.data());
+      
+      setRecords(prevLocal => {
+        // 自動合併本地快取與雲端資料：確保兩邊的資料都不會漏掉
+        const cloudIds = new Set(fetchedRecords.map(r => r.id));
+        const missingInCloud = prevLocal.filter(r => !cloudIds.has(r.id));
         
-        <!-- 主要內容區 -->
-        <main class="flex-1 overflow-y-auto safe-top pb-24">
-            
-            <!-- ====== 1. 首頁 Dashboard ====== -->
-            <div v-show="currentTab === 'home'" class="p-4 space-y-4">
-                <h1 class="text-2xl font-bold text-center mt-2">{{ currentMonthString }}</h1>
-                
-                <!-- 財務總覽卡片 -->
-                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-                    <h2 class="text-lg font-bold text-gray-800">本月財務總覽</h2>
-                    <hr class="border-gray-100">
-                    
-                    <div class="flex justify-between items-center text-sm">
-                        <span class="text-gray-500">💰 本月收入</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(settings.income) }}</span>
-                    </div>
-                    <div class="flex justify-between items-center text-sm">
-                        <span class="text-gray-500">💳 信用卡已消費 (本月)</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(totalCardSpentThisMonth) }}</span>
-                    </div>
-                    <div class="flex justify-between items-center text-sm">
-                        <span class="text-gray-500">💳 本月待繳卡費</span>
-                        <span class="font-bold" :class="totalCardDueThisMonth > 0 ? 'text-red-500' : 'text-green-500'">{{ formatMoney(totalCardDueThisMonth) }}</span>
-                    </div>
-                    <div class="flex justify-between items-center text-sm">
-                        <span class="text-gray-500">🏠 固定支出</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(settings.fixedExpenses) }}</span>
-                    </div>
-                    
-                    <hr class="border-gray-100">
-                    
-                    <div class="flex justify-between items-center text-lg">
-                        <span class="font-bold text-gray-800">🍚 生活費剩餘 (本月)</span>
-                        <span class="font-bold" :class="livingRemainingThisMonth < 0 ? 'text-red-600' : 'text-green-600'">{{ formatMoney(livingRemainingThisMonth) }}</span>
-                    </div>
-                    
-                    <div class="flex justify-between items-center bg-blue-50 rounded-xl p-3 mt-2">
-                        <span class="text-xs text-blue-600 font-medium">📅 今日平均可用 (剩 {{ daysLeft }} 天)</span>
-                        <span class="text-xl font-black text-blue-700">{{ formatMoney(todayAverage) }}</span>
-                    </div>
-                </div>
+        // 如果本地有雲端沒有的資料，自動幫忙補上傳到雲端！
+        if (missingInCloud.length > 0) {
+          missingInCloud.forEach(r => {
+            setDoc(doc(db, 'artifacts', appId, 'users', userId, 'finance_records', r.id), r).catch(err => console.error(err));
+          });
+        }
 
-                <!-- 預算進度卡片 -->
-                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-3">
-                    <div class="flex justify-between text-sm">
-                        <span class="font-bold text-gray-700">生活費預算使用率</span>
-                        <span class="font-bold text-gray-700">{{ expensePercentage }}%</span>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-3">
-                        <div class="h-3 rounded-full transition-all duration-500" 
-                             :class="expensePercentage > 80 ? 'bg-red-500' : 'bg-green-500'" 
-                             :style="`width: ${Math.min(expensePercentage, 100)}%`"></div>
-                    </div>
-                    <p v-if="expensePercentage > 80" class="text-xs text-red-500 font-medium">⚠️ 警告：本月生活費已使用超過 80%</p>
-                </div>
+        const merged = [...fetchedRecords, ...missingInCloud].sort((a, b) => new Date(b.date) - new Date(a.date));
+        return merged;
+      });
 
-                <!-- 交易紀錄 (明細) -->
-                <div class="flex justify-between items-end mt-6 mb-2 ml-1 pr-1">
-                    <h2 class="text-xl font-bold text-gray-800">所有紀錄</h2>
-                    <span class="text-xs text-gray-500">(未來的分期將於該月出現)</span>
-                </div>
-                <div class="bg-white rounded-2xl p-2 shadow-sm mb-6">
-                    <div v-if="visibleTransactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
-                    
-                    <div v-for="t in visibleTransactions" :key="t.id" @click="openEditModal(t)" 
-                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors">
-                        <div class="flex flex-col">
-                            <div class="flex items-center gap-1">
-                                <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : (t.type === '卡費繳款' ? '信用卡繳款' : t.type) }}</span>
-                                <span v-if="t.installmentInfo" class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{{ t.installmentInfo }}</span>
-                            </div>
-                            <div class="flex flex-col mt-1">
-                                <span class="text-xs font-medium text-gray-600">
-                                    入帳: {{ formatDateDisplay(t.date) }}
-                                </span>
-                                <span v-if="t.originalPurchaseDate && formatDateDisplay(t.originalPurchaseDate) !== formatDateDisplay(t.date)" class="text-[10px] text-gray-400">
-                                    消費: {{ formatDateDisplay(t.originalPurchaseDate) }}
-                                </span>
-                                
-                                <span class="text-xs text-gray-500 mt-0.5">
-                                    {{ t.method || '-' }} 
-                                    <span v-if="t.cardId && getCardName(t.cardId)"> ({{ getCardName(t.cardId) }})</span>
-                                    {{ t.note ? ' • '+t.note : '' }}
-                                </span>
-                            </div>
-                        </div>
-                        <div class="flex items-center space-x-3">
-                            <span class="font-bold" :class="(t.type === '支出' || t.type === '卡費繳款') ? 'text-gray-800' : 'text-green-500'">
-                                {{ (t.type === '支出' || t.type === '卡費繳款') ? '-' : '+' }} {{ formatMoney(t.amount) }}
-                            </span>
-                            <span class="text-gray-300">›</span>
-                        </div>
-                    </div>
-                </div>
+      setIsSyncing(false);
+      setIsConnected(true);
+    }, (err) => {
+      console.error("同步紀錄錯誤:", err);
+      setIsSyncing(false);
+    });
+
+    return () => { unsubConfig(); unsubRecords(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (isSyncing && records.length === 0) return;
+    try {
+      localStorage.setItem('finance_records_backup', JSON.stringify(records));
+      localStorage.setItem('finance_cards_backup', JSON.stringify(cards));
+      localStorage.setItem('finance_budget_backup', budgetAmount.toString());
+      
+      if (user && db) {
+        setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'finance_config', 'main'), { cards, budgetAmount }, { merge: true }).catch(e => console.error(e));
+      }
+    } catch (e) {
+      console.error("寫入本地快取失敗", e);
+    }
+  }, [records, cards, budgetAmount, user]);
+
+  const stats = useMemo(() => {
+    let cash = 0;
+    let periodExpense = 0;
+    let periodIncome = 0;
+    let monthBudgetUsed = 0;
+    
+    const cardBalances = {};
+    cards.forEach(c => cardBalances[c.id] = 0);
+    const categoryTotals = {}; 
+
+    const now = new Date();
+    const currentPeriodStart = new Date(now.getFullYear(), now.getMonth(), 5);
+    if (now.getDate() < 5) {
+      currentPeriodStart.setMonth(currentPeriodStart.getMonth() - 1);
+    }
+    currentPeriodStart.setHours(0, 0, 0, 0);
+    
+    const currentPeriodEnd = new Date(currentPeriodStart);
+    currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(now.getMonth() - 6);
+
+    records.forEach(r => {
+      const recordDate = new Date(r.date);
+      const isThisPeriod = recordDate >= currentPeriodStart && recordDate < currentPeriodEnd;
+      const isPastSixMonths = recordDate >= sixMonthsAgo;
+      const isFuture = recordDate >= currentPeriodEnd; 
+
+      let isInRange = false;
+      if (timeRange === 'thisMonth') isInRange = isThisPeriod;
+      else if (timeRange === 'sixMonths') isInRange = isPastSixMonths && !isFuture;
+      else if (timeRange === 'allTime') isInRange = true;
+
+      if (recordDate <= now) {
+        if (r.type === 'income') cash += r.amount;
+        if (r.type === 'expense' && r.paymentMethod === 'cash') cash -= r.amount;
+        if (r.type === 'pay_card') {
+          cash -= r.amount;
+          if (cardBalances[r.paymentMethod] !== undefined) cardBalances[r.paymentMethod] -= r.amount;
+        }
+      }
+
+      if (r.type === 'expense' && r.paymentMethod !== 'cash') {
+        if (cardBalances[r.paymentMethod] !== undefined) {
+          cardBalances[r.paymentMethod] += r.amount;
+        }
+      }
+
+      if (r.type === 'income' && isInRange) {
+        periodIncome += r.amount;
+      } 
+      else if (r.type === 'expense') {
+        if (isThisPeriod && r.deductBudget) monthBudgetUsed += r.amount;
+        
+        if (isInRange) {
+          periodExpense += r.amount;
+          if (!categoryTotals[r.category]) categoryTotals[r.category] = 0;
+          categoryTotals[r.category] += r.amount;
+        }
+      } 
+    });
+
+    const totalCardDebt = Object.values(cardBalances).reduce((a, b) => a + b, 0);
+    const netAsset = cash - totalCardDebt;
+    const periodNetIncome = periodIncome - periodExpense;
+
+    const categoryStats = Object.keys(categoryTotals).map(cat => ({
+      name: cat,
+      amount: categoryTotals[cat],
+      percentage: periodExpense > 0 ? (categoryTotals[cat] / periodExpense) * 100 : 0
+    })).sort((a, b) => b.amount - a.amount);
+
+    return { 
+      cash, periodExpense, periodIncome, monthBudgetUsed, 
+      cardBalances, totalCardDebt, netAsset, periodNetIncome, categoryStats 
+    };
+  }, [records, cards, timeRange]);
+
+  const formatMoney = (num) => {
+    return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(num);
+  };
+
+  const getLocalDatetime = () => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    return now.toISOString().slice(0, 16);
+  };
+
+  const timeRangeLabel = timeRange === 'thisMonth' ? '本期' : timeRange === 'sixMonths' ? '近半年' : '全部';
+  
+  const displayRecords = useMemo(() => {
+    const now = new Date();
+    const currentPeriodStart = new Date(now.getFullYear(), now.getMonth(), 5);
+    if (now.getDate() < 5) currentPeriodStart.setMonth(currentPeriodStart.getMonth() - 1);
+    currentPeriodStart.setHours(0, 0, 0, 0);
+    const currentPeriodEnd = new Date(currentPeriodStart);
+    currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(now.getMonth() - 6);
+    
+    return records.filter(r => {
+      const recordDate = new Date(r.date);
+      if (timeRange === 'thisMonth') return recordDate >= currentPeriodStart && recordDate < currentPeriodEnd;
+      if (timeRange === 'sixMonths') return recordDate >= sixMonthsAgo && recordDate <= now;
+      return true;
+    });
+  }, [records, timeRange]);
+
+  const handleEditClick = (record) => {
+    setEditingRecordId(record.id);
+    setAddType(record.type);
+    
+    const d = new Date(record.date);
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    setRecordDate(d.toISOString().slice(0, 16));
+    
+    setAmount(record.amount.toString());
+    setNote(record.note || '');
+    setCategory(record.category);
+    setPaymentMethod(record.paymentMethod);
+    setDeductBudget(record.deductBudget ?? true);
+    setIsInstallment(false); 
+    setShowAddModal(true);
+  };
+
+  const handleAddRecord = () => {
+    if (!amount || isNaN(amount) || Number(amount) <= 0) return;
+    
+    const totalAmount = Number(amount);
+
+    if (editingRecordId) {
+      const updatedRecord = {
+        id: editingRecordId,
+        date: new Date(recordDate).toISOString(),
+        type: addType,
+        amount: totalAmount,
+        note: note.trim(),
+        category: addType === 'pay_card' ? '信用卡費' : category,
+        paymentMethod: (addType === 'income' || addType === 'pay_card') ? (addType === 'pay_card' ? paymentMethod : 'cash') : paymentMethod,
+        deductBudget: addType === 'expense' ? deductBudget : false
+      };
+
+      if (user && db) {
+        setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'finance_records', updatedRecord.id), updatedRecord);
+      }
+      setRecords(prev => prev.map(r => r.id === editingRecordId ? updatedRecord : r).sort((a, b) => new Date(b.date) - new Date(a.date)));
+    } else {
+      let newRecords = [];
+      const baseDate = new Date(recordDate);
+
+      if (addType === 'expense' && paymentMethod !== 'cash' && isInstallment) {
+        const perMonthAmount = Math.floor(totalAmount / installmentMonths);
+        const remainder = totalAmount % installmentMonths;
+
+        for (let i = 0; i < installmentMonths; i++) {
+          const installmentDate = new Date(baseDate);
+          installmentDate.setMonth(installmentDate.getMonth() + i);
+          
+          const record = {
+            id: 'rec-' + Date.now() + '-' + i,
+            date: installmentDate.toISOString(),
+            type: addType,
+            amount: i === 0 ? perMonthAmount + remainder : perMonthAmount,
+            note: note.trim() ? `${note.trim()} (${i + 1}/${installmentMonths}期)` : `(${i + 1}/${installmentMonths}期)`,
+            category,
+            paymentMethod,
+            deductBudget
+          };
+          newRecords.push(record);
+        }
+      } else {
+        const record = {
+          id: 'rec-' + Date.now(),
+          date: baseDate.toISOString(),
+          type: addType,
+          amount: totalAmount,
+          note: note.trim(),
+          category: addType === 'pay_card' ? '信用卡費' : category,
+          paymentMethod: (addType === 'income' || addType === 'pay_card') ? (addType === 'pay_card' ? paymentMethod : 'cash') : paymentMethod,
+          deductBudget: addType === 'expense' ? deductBudget : false
+        };
+        newRecords.push(record);
+      }
+
+      if (user && db) {
+        newRecords.forEach(r => {
+          setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'finance_records', r.id), r);
+        });
+      }
+      setRecords(prev => [...newRecords, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
+    }
+    
+    setShowAddModal(false);
+    setEditingRecordId(null);
+    setAmount('');
+    setNote('');
+    setPaymentMethod('cash');
+    setDeductBudget(true);
+    setIsInstallment(false);
+    setInstallmentMonths(3);
+  };
+
+  const handleDeleteRecord = (id) => {
+    if (user && db) {
+      deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'finance_records', id));
+    }
+    setRecords(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleUpdateConfig = (newCards, newBudget) => {
+    if (user && db) {
+      setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'finance_config', 'main'), { cards: newCards, budgetAmount: newBudget }, { merge: true });
+    }
+    if (newCards) setCards(newCards);
+    if (newBudget !== undefined) setBudgetAmount(newBudget);
+  };
+
+  if (isSyncing && records.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center font-sans">
+        <div className="w-12 h-12 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
+        <p className="text-gray-500 font-medium">同步雲端資料中...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-800 flex justify-center pb-[env(safe-area-inset-bottom)]">
+      <div className="w-full max-w-md bg-gray-50 shadow-2xl relative overflow-hidden flex flex-col h-[100dvh]">
+        
+        <div className="flex-1 overflow-y-auto">
+          <header className="bg-emerald-600 text-white pt-12 pb-8 px-6 rounded-b-3xl shadow-md">
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-wide">我的記帳</h1>
+                {isConnected && (
+                  <span className="flex h-2 w-2 relative" title="雲端同步中">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-200 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-300"></span>
+                  </span>
+                )}
+              </div>
+              <button onClick={() => setShowSettingsModal(true)} className="bg-emerald-700/50 hover:bg-emerald-700 p-2 rounded-full transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287-.947c.886.54 2.042.061 2.287-.947 1.372.836 2.942-.734 2.106-2.106a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                </svg>
+              </button>
             </div>
 
-            <!-- ====== 2. 信用卡管理頁面 ====== -->
-            <div v-show="currentTab === 'cards'" class="p-4 space-y-4">
-                <div class="flex justify-between items-center mt-2 mb-4">
-                    <h1 class="text-2xl font-bold">信用卡管理</h1>
-                    <button @click="openCardModal(null)" class="text-blue-600 font-bold bg-blue-50 px-3 py-1 rounded-full text-sm">+ 新增</button>
-                </div>
-
-                <div v-if="creditCards.length === 0" class="bg-white rounded-2xl p-8 text-center text-gray-400 shadow-sm">
-                    尚未設定任何信用卡
-                </div>
-
-                <div v-for="card in creditCards" :key="card.id" @click="openCardModal(card)" class="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 shadow-md text-white active:scale-95 transition-transform cursor-pointer relative overflow-hidden">
-                    <div class="absolute top-5 right-5 text-gray-400 opacity-50 text-2xl font-black italic">VISA</div>
-                    <div class="w-10 h-8 bg-yellow-600 rounded-md opacity-80 mb-4"></div>
-                    
-                    <h2 class="text-xl font-bold mb-4">{{ card.name }}</h2>
-                    
-                    <div class="flex justify-between items-end">
-                        <div class="space-y-1">
-                            <p class="text-xs text-gray-400">本期待繳 (含本月分期)</p>
-                            <p class="text-2xl font-black text-red-300">{{ formatMoney(getCardDueThisMonth(card.id)) }}</p>
-                            <p class="text-xs text-gray-400 mt-2">結帳: {{ card.billingDay }}日 | 繳費: {{ card.dueDay }}日</p>
-                        </div>
-                        <div class="text-right space-y-1">
-                            <p class="text-xs text-gray-400">剩餘可用額度 (扣除所有分期)</p>
-                            <p class="text-lg font-bold">{{ formatMoney(getCardBalance(card.id)) }}</p>
-                            <p class="text-xs text-gray-400 mt-2">總額度: {{ formatMoney(card.limit) }}</p>
-                        </div>
-                    </div>
-                </div>
+            <div className="mb-6">
+              <p className="text-emerald-100 text-sm mb-1">總資產 (淨值)</p>
+              <h2 className="text-4xl font-extrabold">{formatMoney(stats.netAsset)}</h2>
             </div>
 
-            <!-- ====== 3. 記帳頁面 ====== -->
-            <div v-show="currentTab === 'add'" class="p-4 space-y-4">
-                <h1 class="text-2xl font-bold mt-2 mb-4">記一筆</h1>
-                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
-                    <!-- 類型選擇 -->
-                    <div class="flex p-1 bg-gray-100 rounded-lg">
-                        <button v-for="type in types" :key="type" @click="form.type = type"
-                                class="flex-1 py-2 text-sm font-medium rounded-md transition-colors"
-                                :class="form.type === type ? 'bg-white shadow text-black' : 'text-gray-500'">
-                            {{ type }}
-                        </button>
-                    </div>
-
-                    <!-- 金額輸入 -->
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">
-                            金額 <span v-if="form.method === '信用卡' && form.installments > 1" class="text-blue-600 font-normal ml-2">(總金額)</span>
-                        </label>
-                        <input type="number" inputmode="decimal" v-model="form.amount" placeholder="0" 
-                               class="w-full text-4xl font-bold bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
-                    </div>
-
-                    <!-- 支出專用欄位 -->
-                    <template v-if="form.type === '支出'">
-                        <div>
-                            <label class="block text-sm font-bold text-gray-700 mb-2">分類</label>
-                            <div class="grid grid-cols-4 gap-2">
-                                <button v-for="cat in categories" :key="cat" @click="form.category = cat"
-                                        class="p-2 text-xs rounded-lg border transition-colors"
-                                        :class="form.category === cat ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 text-gray-600'">
-                                    {{ cat }}
-                                </button>
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-bold text-gray-700 mb-2">支付方式</label>
-                            <div class="flex gap-2 mb-2">
-                                <button v-for="method in methods" :key="method" @click="form.method = method"
-                                        class="flex-1 py-2 text-sm rounded-lg border transition-colors"
-                                        :class="form.method === method ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'bg-white border-gray-200 text-gray-600'">
-                                    {{ method }}
-                                </button>
-                            </div>
-                            
-                            <div v-if="form.method === '信用卡'" class="animate-fade-in space-y-2 mt-2">
-                                <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
-                                    <option disabled value="">請選擇信用卡</option>
-                                    <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }}</option>
-                                </select>
-                                <p v-if="creditCards.length === 0" class="text-xs text-red-500">請先至「信用卡」分頁新增卡片</p>
-                                
-                                <!-- 分期選項 -->
-                                <div class="flex items-center gap-2 mt-2">
-                                    <label class="text-sm font-bold text-gray-700 whitespace-nowrap">分期：</label>
-                                    <select v-model="form.installments" class="flex-1 bg-gray-50 p-2 rounded-xl border-0 text-sm">
-                                        <option value="1">無分期 (一次付清)</option>
-                                        <option value="3">3 期</option>
-                                        <option value="6">6 期</option>
-                                        <option value="9">9 期</option>
-                                        <option value="12">12 期</option>
-                                    </select>
-                                </div>
-                                <p v-if="form.installments > 1 && form.amount" class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1">
-                                    💡 將自動拆分為 {{ form.installments }} 期。<br>後續月份的款項將在該月自動出現，不影響本月預算。
-                                </p>
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- 卡費繳款專用欄位 -->
-                    <template v-if="form.type === '卡費繳款'">
-                        <div>
-                            <label class="block text-sm font-bold text-gray-700 mb-2">繳納哪張信用卡？</label>
-                            <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
-                                <option disabled value="">請選擇信用卡</option>
-                                <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }} (本期待繳: {{ formatMoney(getCardDueThisMonth(card.id)) }})</option>
-                            </select>
-                            <p v-if="creditCards.length === 0" class="text-xs text-red-500 mt-1">請先至「信用卡」分頁新增卡片</p>
-                        </div>
-                    </template>
-
-                    <!-- 日期與備註 -->
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">消費日期</label>
-                        <input type="date" v-model="form.date" 
-                               class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
-                        <p v-if="form.installments > 1" class="text-xs text-gray-500 mt-1">第一期入帳日為此日，後續每期將自動加一個月。</p>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">備註 (選填)</label>
-                        <input type="text" v-model="form.note" placeholder="例如：買手機" 
-                               class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
-                    </div>
-
-                    <button @click="saveTransaction" class="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl shadow-md active:bg-blue-700 transition-colors">
-                        儲存紀錄
-                    </button>
-                </div>
+            <div className="flex justify-center mb-5">
+              <div className="bg-emerald-800/40 p-1 rounded-lg flex text-xs w-full max-w-[240px]">
+                <button onClick={() => setTimeRange('thisMonth')} className={`flex-1 py-1.5 rounded-md transition-colors ${timeRange === 'thisMonth' ? 'bg-emerald-600 text-white font-bold shadow-sm' : 'text-emerald-100 hover:bg-emerald-700/50'}`}>本期</button>
+                <button onClick={() => setTimeRange('sixMonths')} className={`flex-1 py-1.5 rounded-md transition-colors ${timeRange === 'sixMonths' ? 'bg-emerald-600 text-white font-bold shadow-sm' : 'text-emerald-100 hover:bg-emerald-700/50'}`}>近半年</button>
+                <button onClick={() => setTimeRange('allTime')} className={`flex-1 py-1.5 rounded-md transition-colors ${timeRange === 'allTime' ? 'bg-emerald-600 text-white font-bold shadow-sm' : 'text-emerald-100 hover:bg-emerald-700/50'}`}>全部</button>
+              </div>
             </div>
 
-            <!-- ====== 4. 統計頁面 ====== -->
-            <div v-show="currentTab === 'stats'" class="p-4 space-y-4">
-                <h1 class="text-2xl font-bold mt-2 mb-4">本月統計</h1>
-                
-                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-                    <h2 class="text-lg font-bold text-gray-800 text-center">本月總支出 (含本月分期)</h2>
-                    <p class="text-4xl font-black text-center text-red-500">{{ formatMoney(livingExpensesThisMonth) }}</p>
-                    
-                    <div class="flex justify-between bg-gray-50 p-3 rounded-xl mt-4">
-                        <div class="text-center flex-1 border-r border-gray-200">
-                            <p class="text-xs text-gray-500 mb-1">信用卡消費</p>
-                            <p class="font-bold text-gray-800">{{ formatMoney(totalCardSpentThisMonth) }}</p>
-                        </div>
-                        <div class="text-center flex-1">
-                            <p class="text-xs text-gray-500 mb-1">現金/轉帳</p>
-                            <p class="font-bold text-gray-800">{{ formatMoney(livingExpensesThisMonth - totalCardSpentThisMonth) }}</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-2xl p-5 shadow-sm mt-4">
-                    <h2 class="text-lg font-bold text-gray-800 mb-4">分類統計</h2>
-                    
-                    <div v-if="categoryStats.length === 0" class="text-center text-gray-400 py-4">
-                        本月尚無支出紀錄
-                    </div>
-                    
-                    <div class="space-y-4" v-else>
-                        <div v-for="(stat, index) in categoryStats" :key="stat.name">
-                            <div class="flex justify-between text-sm mb-1">
-                                <span class="font-bold text-gray-700">{{ stat.name }}</span>
-                                <span class="font-bold text-gray-900">{{ formatMoney(stat.amount) }} ({{ stat.percentage }}%)</span>
-                            </div>
-                            <div class="w-full bg-gray-100 rounded-full h-2">
-                                <div class="h-2 rounded-full" 
-                                     :class="getColorClass(index)"
-                                     :style="`width: ${stat.percentage}%`"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ====== 5. 設定頁面 ====== -->
-            <div v-show="currentTab === 'settings'" class="p-4 space-y-4">
-                <h1 class="text-2xl font-bold mt-2 mb-4">財務設定</h1>
-                
-                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
-                    <div>
-                        <label class="block text-sm font-bold text-blue-600 mb-2">每月生活費預算</label>
-                        <input type="number" inputmode="numeric" v-model="settings.livingBudget" class="w-full text-xl font-bold text-blue-700 bg-blue-50 p-3 rounded-xl border-0">
-                        <p class="text-xs text-gray-400 mt-2">設定你每個月可使用的生活費上限，可隨時自由修改。</p>
-                    </div>
-                    <hr class="border-gray-100">
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">每月固定收入</label>
-                        <input type="number" inputmode="numeric" v-model="settings.income" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">每月固定支出</label>
-                        <input type="number" inputmode="numeric" v-model="settings.fixedExpenses" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
-                    </div>
-                </div>
-                
-                <button @click="clearData" class="w-full py-4 text-red-500 bg-white rounded-2xl font-bold shadow-sm mt-4">
-                    清空所有手機端紀錄
-                </button>
-            </div>
-            
-        </main>
-
-        <!-- ====== 底部導航列 ====== -->
-        <nav class="absolute bottom-0 w-full bg-white border-t border-gray-200 safe-bottom z-40">
-            <div class="flex justify-between items-center h-16 px-1">
-                <button @click="currentTab = 'home'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
-                    <span class="text-xl">🏠</span>
-                    <span class="text-[10px] font-medium mt-1">總覽</span>
-                </button>
-                <button @click="currentTab = 'cards'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'cards' ? 'text-blue-600' : 'text-gray-400'">
-                    <span class="text-xl">💳</span>
-                    <span class="text-[10px] font-medium mt-1">信用卡</span>
-                </button>
-                
-                <!-- 中間懸浮大按鈕 -->
-                <div class="flex justify-center items-center -mt-6">
-                    <button @click="currentTab = 'add'" class="w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform border-4 border-white">
-                        <span class="text-2xl font-bold">+</span>
-                    </button>
-                </div>
-                
-                <button @click="currentTab = 'stats'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'stats' ? 'text-blue-600' : 'text-gray-400'">
-                    <span class="text-xl">📊</span>
-                    <span class="text-[10px] font-medium mt-1">統計</span>
-                </button>
-                <button @click="currentTab = 'settings'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'settings' ? 'text-blue-600' : 'text-gray-400'">
-                    <span class="text-xl">⚙️</span>
-                    <span class="text-[10px] font-medium mt-1">設定</span>
-                </button>
-            </div>
-        </nav>
-
-        <!-- ====== 編輯交易紀錄彈窗 (Modal) ====== -->
-        <div v-if="isEditing" class="absolute inset-0 z-50 flex items-end justify-center bg-black bg-opacity-40" @click.self="isEditing = false">
-            <div class="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 safe-bottom space-y-4 shadow-2xl animate-slide-up">
-                <div class="flex justify-between items-center mb-2">
-                    <h2 class="text-xl font-bold">修改紀錄</h2>
-                    <button @click="isEditing = false" class="text-gray-400 bg-gray-100 rounded-full w-8 h-8 flex justify-center items-center font-bold">✕</button>
-                </div>
-                
-                <p v-if="editForm.installmentInfo" class="text-xs text-blue-600 bg-blue-50 p-2 rounded">
-                    這是一筆分期消費（消費日：{{ formatDateDisplay(editForm.originalPurchaseDate) }}），目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期。
+            <div className="flex bg-emerald-700/30 p-4 rounded-2xl backdrop-blur-sm mb-4">
+              <div className="flex-1">
+                <p className="text-emerald-100 text-[11px] mb-1">{timeRangeLabel}收入</p>
+                <p className="font-semibold text-white text-sm">{formatMoney(stats.periodIncome)}</p>
+              </div>
+              <div className="w-px bg-emerald-500/50 mx-2"></div>
+              <div className="flex-1">
+                <p className="text-emerald-100 text-[11px] mb-1">{timeRangeLabel}支出</p>
+                <p className="font-semibold text-white text-sm">{formatMoney(stats.periodExpense)}</p>
+              </div>
+              <div className="w-px bg-emerald-500/50 mx-2"></div>
+              <div className="flex-1">
+                <p className="text-emerald-100 text-[11px] mb-1">{timeRangeLabel}結餘</p>
+                <p className={`font-semibold text-sm ${stats.periodNetIncome < 0 ? 'text-red-300' : 'text-white'}`}>
+                  {stats.periodNetIncome > 0 ? '+' : ''}{formatMoney(stats.periodNetIncome)}
                 </p>
-
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">金額</label>
-                    <input type="number" inputmode="decimal" v-model="editForm.amount" class="w-full text-2xl font-bold bg-gray-50 p-3 rounded-xl border-0">
-                </div>
-                
-                <template v-if="editForm.type === '支出'">
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1">分類</label>
-                        <select v-model="editForm.category" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                            <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1">支付方式</label>
-                        <select v-model="editForm.method" class="w-full bg-gray-50 p-3 rounded-xl border-0" :disabled="!!editForm.installmentInfo">
-                            <option v-for="method in methods" :key="method" :value="method">{{ method }}</option>
-                        </select>
-                    </div>
-                    <div v-if="editForm.method === '信用卡'">
-                        <label class="block text-sm font-bold text-gray-700 mb-1">信用卡</label>
-                        <select v-model="editForm.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold" :disabled="!!editForm.installmentInfo">
-                            <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }}</option>
-                        </select>
-                    </div>
-                </template>
-                
-                <template v-if="editForm.type === '卡費繳款'">
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1">繳納哪張信用卡？</label>
-                        <select v-model="editForm.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
-                            <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }}</option>
-                        </select>
-                    </div>
-                </template>
-
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">入帳日期</label>
-                    <input type="date" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">備註</label>
-                    <input type="text" v-model="editForm.note" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                </div>
-
-                <div class="flex gap-3 pt-2">
-                    <button @click="deleteTransaction" class="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">刪除此期</button>
-                    <button @click="saveEdit" class="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl">儲存</button>
-                </div>
+              </div>
             </div>
+
+            <div className="bg-emerald-700/30 p-4 rounded-2xl backdrop-blur-sm">
+              <div className="flex justify-between items-end">
+                <p className="text-emerald-100 text-xs">
+                  本期預算餘額 <span className="text-[10px] opacity-75">(每月5號重置)</span>
+                </p>
+                <p className="font-bold text-sm">{formatMoney(Math.max(0, budgetAmount - stats.monthBudgetUsed))}</p>
+              </div>
+              <div className="w-full bg-black/20 rounded-full h-2 mt-2 overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${stats.monthBudgetUsed > budgetAmount ? 'bg-red-400' : 'bg-emerald-300'}`} 
+                  style={{ width: Math.min((stats.monthBudgetUsed / budgetAmount) * 100, 100) + '%' }}
+                ></div>
+              </div>
+            </div>
+          </header>
+
+          <main className="p-6 pb-32">
+            <div className="flex bg-gray-200/70 p-1 rounded-xl mb-5">
+              <button 
+                onClick={() => setActiveView('list')}
+                className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors ${activeView === 'list' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                歷史明細
+              </button>
+              <button 
+                onClick={() => setActiveView('stats')}
+                className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors ${activeView === 'stats' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                {timeRangeLabel}統計
+              </button>
+            </div>
+
+            {activeView === 'list' ? (
+              displayRecords.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 flex flex-col items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <p>這個區間還沒有任何紀錄喔！</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {displayRecords.map(r => {
+                    const isExpense = r.type === 'expense';
+                    const isPayCard = r.type === 'pay_card';
+                    const cardName = cards.find(c => c.id === r.paymentMethod)?.name || '信用卡';
+
+                    return (
+                      <div key={r.id} className="bg-white p-4 rounded-2xl shadow-sm flex items-center justify-between group hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-inner shrink-0
+                            ${isExpense ? (categoryColors[r.category] || 'bg-red-400') : isPayCard ? 'bg-blue-400' : 'bg-emerald-400'}`}>
+                            {r.category.substring(0, 1)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <p className="font-bold text-gray-800 truncate">{r.category}</p>
+                              {isExpense && !r.deductBudget && (
+                                <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded shrink-0">不計預算</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400 truncate w-full">
+                              <span>{new Date(r.date).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })}</span>
+                              <span className="mx-1">•</span>
+                              <span className={r.paymentMethod !== 'cash' ? 'text-blue-500' : ''}>
+                                {r.paymentMethod === 'cash' ? '現金' : cardName}
+                              </span>
+                              {r.note && (
+                                <>
+                                  <span className="mx-1">•</span>
+                                  <span className="truncate">{r.note}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 pl-2">
+                          <p className={`font-bold ${isExpense ? 'text-red-500' : isPayCard ? 'text-blue-500' : 'text-emerald-500'}`}>
+                            {isExpense ? '-' : isPayCard ? '' : '+'}{formatMoney(r.amount)}
+                          </p>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleEditClick(r)} className="text-gray-400 p-1.5 hover:bg-gray-100 hover:text-gray-600 rounded">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+                            </button>
+                            <button onClick={() => handleDeleteRecord(r.id)} className="text-red-300 p-1.5 hover:bg-red-50 hover:text-red-500 rounded">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              <div className="space-y-4 animate-slide-up">
+                {stats.categoryStats.length === 0 ? (
+                  <div className="text-center text-gray-400 py-10">{timeRangeLabel}尚無支出紀錄可以統計喔！</div>
+                ) : (
+                  <>
+                    <h3 className="text-sm font-bold text-gray-500 mb-2">{timeRangeLabel}支出分佈</h3>
+                    {stats.categoryStats.map(cat => (
+                      <div key={cat.name} className="bg-white p-4 rounded-2xl shadow-sm">
+                        <div className="flex justify-between items-end mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-3 h-3 rounded-full ${categoryColors[cat.name] || 'bg-gray-400'}`}></span>
+                            <span className="font-bold text-gray-700">{cat.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-bold text-gray-900">{formatMoney(cat.amount)}</span>
+                            <span className="text-xs text-gray-400 ml-2">{cat.percentage.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                          <div className={`h-full rounded-full ${categoryColors[cat.name] || 'bg-gray-400'}`} style={{ width: `${cat.percentage}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </main>
+        </div> 
+
+        <div className="absolute bottom-8 left-0 right-0 flex justify-center px-6 pointer-events-none">
+          <button 
+            onClick={() => {
+              setEditingRecordId(null);
+              setRecordDate(getLocalDatetime()); 
+              setAddType('expense');
+              setCategory('飲食');
+              setPaymentMethod('cash');
+              setAmount('');
+              setNote('');
+              setIsInstallment(false);
+              setShowAddModal(true);
+            }}
+            className="pointer-events-auto bg-gray-900 text-white shadow-xl rounded-full px-6 py-3.5 flex items-center gap-2 hover:bg-gray-800 transition-transform active:scale-95"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+            </svg>
+            <span className="font-bold">記一筆</span>
+          </button>
         </div>
 
-        <!-- ====== 編輯信用卡彈窗 (Modal) ====== -->
-        <div v-if="isCardModalOpen" class="absolute inset-0 z-50 flex items-end justify-center bg-black bg-opacity-40" @click.self="isCardModalOpen = false">
-            <div class="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 safe-bottom space-y-4 shadow-2xl animate-slide-up">
-                <div class="flex justify-between items-center mb-2">
-                    <h2 class="text-xl font-bold">{{ cardForm.id ? '修改信用卡' : '新增信用卡' }}</h2>
-                    <button @click="isCardModalOpen = false" class="text-gray-400 bg-gray-100 rounded-full w-8 h-8 flex justify-center items-center font-bold">✕</button>
-                </div>
-                
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">卡片名稱</label>
-                    <input type="text" v-model="cardForm.name" placeholder="例如：中信 Line Pay 卡" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">信用卡總額度</label>
-                    <input type="number" inputmode="numeric" v-model="cardForm.limit" placeholder="例如：100000" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                </div>
-                <div class="flex gap-3">
-                    <div class="flex-1">
-                        <label class="block text-sm font-bold text-gray-700 mb-1">每月結帳日</label>
-                        <input type="number" inputmode="numeric" v-model="cardForm.billingDay" placeholder="1-31" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                    </div>
-                    <div class="flex-1">
-                        <label class="block text-sm font-bold text-gray-700 mb-1">每月繳費日</label>
-                        <input type="number" inputmode="numeric" v-model="cardForm.dueDay" placeholder="1-31" class="w-full bg-gray-50 p-3 rounded-xl border-0">
-                    </div>
+        {showAddModal && (
+          <div className="absolute inset-0 z-50 bg-black/60 flex flex-col justify-end">
+            <div className="bg-white rounded-t-3xl w-full p-6 animate-slide-up h-[85vh] flex flex-col">
+              <div className="flex justify-between items-center mb-6 shrink-0">
+                <h3 className="text-xl font-bold">{editingRecordId ? '修改紀錄' : '新增紀錄'}</h3>
+                <button onClick={() => { setShowAddModal(false); setEditingRecordId(null); }} className="p-2 bg-gray-100 rounded-full text-gray-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pb-6">
+                <div className="flex bg-gray-100 p-1 rounded-xl mb-6">
+                  <button className={`flex-1 py-2 text-sm font-bold rounded-lg ${addType === 'expense' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`} onClick={() => { setAddType('expense'); setCategory('飲食'); setPaymentMethod('cash'); setIsInstallment(false); }}>支出</button>
+                  <button className={`flex-1 py-2 text-sm font-bold rounded-lg ${addType === 'income' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`} onClick={() => { setAddType('income'); setCategory('薪水'); setPaymentMethod('cash'); setIsInstallment(false); }}>收入</button>
+                  <button className={`flex-1 py-2 text-sm font-bold rounded-lg ${addType === 'pay_card' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`} onClick={() => { setAddType('pay_card'); setCategory('信用卡費'); setPaymentMethod(cards.length > 0 ? cards[0].id : ''); setIsInstallment(false); }}>繳卡費</button>
                 </div>
 
-                <div class="flex gap-3 pt-4">
-                    <button v-if="cardForm.id" @click="deleteCard" class="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">刪除卡片</button>
-                    <button @click="saveCard" class="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl w-full">儲存</button>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">日期時間</label>
+                    <input type="datetime-local" value={recordDate} onChange={(e) => setRecordDate(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 text-gray-900" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">金額</label>
+                    <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full text-3xl font-bold border-b-2 border-gray-200 py-2 focus:outline-none focus:border-emerald-500 bg-transparent text-gray-900" placeholder="0" autoFocus />
+                  </div>
+
+                  {addType !== 'pay_card' && (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-2">分類</label>
+                      <div className="flex flex-wrap gap-2">
+                        {(addType === 'expense' ? expenseCategories : incomeCategories).map(cat => (
+                          <button key={cat} onClick={() => setCategory(cat)} className={`px-4 py-2 rounded-full text-sm font-medium border ${category === cat ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200'}`}>{cat}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {addType !== 'income' && (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-2">{addType === 'pay_card' ? '繳納哪張信用卡？' : '付款方式'}</label>
+                      <select value={paymentMethod} onChange={(e) => { setPaymentMethod(e.target.value); if (e.target.value === 'cash') setIsInstallment(false); }} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 text-gray-900">
+                        {addType !== 'pay_card' && <option value="cash">現金</option>}
+                        {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {!editingRecordId && addType === 'expense' && paymentMethod !== 'cash' && (
+                    <div className="bg-blue-50 p-3 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-bold text-blue-900">💳 信用卡分期付款</p>
+                          <p className="text-xs text-blue-700/70">自動將金額拆分至未來月份</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={isInstallment} onChange={(e) => setIsInstallment(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-gray-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 peer-checked:bg-blue-500"></div>
+                        </label>
+                      </div>
+                      
+                      {isInstallment && (
+                        <div className="flex gap-2 animate-slide-up">
+                          {[3, 6, 12, 24].map(m => (
+                            <button key={m} onClick={() => setInstallmentMonths(m)} className={`flex-1 py-1.5 text-sm font-bold rounded-lg border ${installmentMonths === m ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-white text-blue-600 border-blue-200'}`}>{m}期</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">備註 (選填)</label>
+                    <input type="text" value={note} onChange={(e) => setNote(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 text-gray-900" placeholder="例如：晚餐、買衣服..." />
+                  </div>
+
+                  {addType === 'expense' && (
+                    <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl">
+                      <div>
+                        <p className="text-sm font-bold text-emerald-900">扣除生活預算</p>
+                        <p className="text-xs text-emerald-700/70">非日常大額支出可關閉</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" checked={deductBudget} onChange={(e) => setDeductBudget(e.target.checked)} className="sr-only peer" />
+                        <div className="w-11 h-6 bg-gray-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 peer-checked:bg-emerald-500"></div>
+                      </label>
+                    </div>
+                  )}
+
+                  <button onClick={handleAddRecord} disabled={!amount || Number(amount) <= 0 || (addType === 'pay_card' && !paymentMethod)} className="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl mt-4 disabled:opacity-50 disabled:bg-gray-400 active:bg-emerald-700">
+                    {editingRecordId ? '儲存修改' : `確認儲存 ${isInstallment && amount ? `(共${installmentMonths}期)` : ''}`}
+                  </button>
                 </div>
+              </div>
             </div>
-        </div>
+          </div>
+        )}
 
+        {showSettingsModal && (
+          <div className="absolute inset-0 z-50 bg-black/60 flex flex-col justify-end">
+            <div className="bg-white rounded-t-3xl w-full p-6 h-[85vh] flex flex-col animate-slide-up">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold">設定</h3>
+                <button onClick={() => setShowSettingsModal(false)} className="p-2 bg-gray-100 rounded-full text-gray-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto space-y-6 pb-6">
+                <div>
+                  <h4 className="font-bold text-gray-700 mb-2">每月生活預算</h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">$</span>
+                    <input type="number" inputMode="numeric" value={budgetAmount} onChange={(e) => setBudgetAmount(Number(e.target.value) || 0)} onBlur={() => handleUpdateConfig(cards, budgetAmount)} className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 font-bold text-gray-900" />
+                  </div>
+                </div>
+
+                <hr className="border-gray-100" />
+
+                <div>
+                  <h4 className="font-bold text-gray-700 mb-3">信用卡管理</h4>
+                  <div className="space-y-3 mb-3">
+                    {cards.map(card => (
+                      <div key={card.id} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-xl">
+                        <div>
+                          <p className="font-bold text-gray-800">{card.name}</p>
+                          <p className="text-xs text-red-500 mt-1 font-semibold">未繳餘額: {formatMoney(stats.cardBalances[card.id] || 0)}</p>
+                        </div>
+                        <button onClick={() => { const newCards = cards.filter(c => c.id !== card.id); handleUpdateConfig(newCards, budgetAmount); }} className="text-red-400 p-2 hover:bg-red-50 rounded">刪除</button>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {showCardInput ? (
+                    <div className="flex gap-2 mb-3">
+                      <input type="text" value={newCardName} onChange={(e) => setNewCardName(e.target.value)} placeholder="信用卡名稱" className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none text-gray-900" autoFocus />
+                      <button onClick={() => { if (newCardName.trim()) { const newCards = [...cards, { id: 'card-' + Date.now(), name: newCardName.trim() }]; handleUpdateConfig(newCards, budgetAmount); setNewCardName(''); setShowCardInput(false); } }} className="px-4 bg-emerald-600 text-white font-bold rounded-xl shrink-0">儲存</button>
+                      <button onClick={() => { setNewCardName(''); setShowCardInput(false); }} className="px-4 bg-gray-200 text-gray-700 font-bold rounded-xl shrink-0">取消</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowCardInput(true)} className="w-full py-3 border-2 border-dashed border-emerald-300 text-emerald-600 font-bold rounded-xl hover:bg-emerald-50 transition-colors">+ 新增信用卡</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes slide-up { from { transform: translateY(10%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .animate-slide-up { animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      `}} />
     </div>
-
-    <!-- 財務邏輯 -->
-    <script>
-        const { createApp, ref, computed, watch, onMounted } = Vue;
-
-        createApp({
-            setup() {
-                const currentTab = ref('home');
-                const transactions = ref([]);
-                const creditCards = ref([]);
-                
-                const settings = ref({
-                    income: 67000,
-                    fixedExpenses: 40000,
-                    livingBudget: 30000
-                });
-                
-                const toLocalDateString = (dateObjOrString) => {
-                    if (!dateObjOrString) return '';
-                    const d = new Date(dateObjOrString);
-                    if (isNaN(d.getTime())) return '';
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    return `${year}-${month}-${day}`;
-                };
-
-                const types = ['支出', '收入', '卡費繳款'];
-                const categories = ['🍚 餐飲', '🛒 日用', '🚗 交通', '🎮 娛樂', '🛍 購物', '👨‍👩‍👧 家庭', '🏠 房租', '📦 其他'];
-                const methods = ['現金', '信用卡', '轉帳'];
-                
-                const form = ref({ type: '支出', amount: '', category: '🛍 購物', method: '現金', note: '', cardId: '', date: toLocalDateString(new Date()), installments: "1" });
-                const isEditing = ref(false);
-                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '', installmentInfo: '', originalPurchaseDate: '' });
-
-                const isCardModalOpen = ref(false);
-                const cardForm = ref({ id: null, name: '', limit: '', billingDay: '', dueDay: '' });
-
-                const colorClasses = ['bg-blue-500', 'bg-red-400', 'bg-yellow-400', 'bg-green-500', 'bg-purple-500', 'bg-pink-400', 'bg-indigo-400', 'bg-orange-400'];
-
-                watch(() => form.value.method, (newVal) => {
-                    if (newVal === '信用卡' && creditCards.value.length > 0 && !form.value.cardId) {
-                        form.value.cardId = creditCards.value[0].id;
-                    }
-                    if (newVal !== '信用卡') {
-                        form.value.installments = "1";
-                    }
-                });
-                watch(() => form.value.type, (newVal) => {
-                    if (newVal === '卡費繳款' && creditCards.value.length > 0 && !form.value.cardId) {
-                        form.value.cardId = creditCards.value[0].id;
-                    }
-                    if (newVal !== '支出') {
-                        form.value.installments = "1";
-                    }
-                });
-
-                const currentYear = new Date().getFullYear();
-                const currentMonth = new Date().getMonth();
-
-                const isThisMonth = (isoDateString) => {
-                    if (!isoDateString) return false;
-                    const d = new Date(isoDateString);
-                    if (isNaN(d.getTime())) return false;
-                    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-                };
-
-                const isFutureTransaction = (isoDateString) => {
-                    if (!isoDateString) return false;
-                    const d = new Date(isoDateString);
-                    if (isNaN(d.getTime())) return false;
-                    return d.getFullYear() > currentYear || (d.getFullYear() === currentYear && d.getMonth() > currentMonth);
-                };
-
-                const livingExpensesThisMonth = computed(() => {
-                    return transactions.value
-                        .filter(t => t.type === '支出' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                });
-
-                const livingRemainingThisMonth = computed(() => (Number(settings.value.livingBudget) || 0) - livingExpensesThisMonth.value);
-                
-                const totalCardSpentThisMonth = computed(() => {
-                    return transactions.value
-                        .filter(t => t.type === '支出' && t.method === '信用卡' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                });
-                
-                const totalCardPaidThisMonth = computed(() => {
-                    return transactions.value
-                        .filter(t => t.type === '卡費繳款' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                });
-                
-                const totalCardDueThisMonth = computed(() => Math.max(totalCardSpentThisMonth.value - totalCardPaidThisMonth.value, 0));
-
-                const getCardSpentThisMonth = (cardId) => {
-                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                };
-                const getCardPaidThisMonth = (cardId) => {
-                    return transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                };
-                const getCardDueThisMonth = (cardId) => {
-                    return Math.max(getCardSpentThisMonth(cardId) - getCardPaidThisMonth(cardId), 0);
-                };
-
-                const getCardBalance = (cardId) => {
-                    const card = creditCards.value.find(c => c.id === cardId);
-                    if(!card) return 0;
-                    const allTimeSpent = transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                    const allTimePaid = transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                    const totalOwed = Math.max(allTimeSpent - allTimePaid, 0);
-                    return card.limit - totalOwed;
-                };
-
-                const getCardName = (cardId) => {
-                    const card = creditCards.value.find(c => c.id === cardId);
-                    return card ? card.name : '';
-                };
-
-                const daysLeft = computed(() => {
-                    const today = new Date();
-                    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-                    return Math.max(lastDay - today.getDate() + 1, 1);
-                });
-
-                const todayAverage = computed(() => livingRemainingThisMonth.value / daysLeft.value);
-                const expensePercentage = computed(() => {
-                    const budget = Number(settings.value.livingBudget) || 0;
-                    if(budget <= 0) return 0;
-                    return ((livingExpensesThisMonth.value / budget) * 100).toFixed(1);
-                });
-
-                const currentMonthString = computed(() => {
-                    const d = new Date();
-                    return `${d.getFullYear()}年${d.getMonth() + 1}月`;
-                });
-
-                const visibleTransactions = computed(() => {
-                    return transactions.value
-                        .filter(t => !isFutureTransaction(t.date))
-                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-                });
-
-                const sortedTransactions = computed(() => {
-                    return [...transactions.value].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-                });
-
-                const categoryStats = computed(() => {
-                    const expenses = transactions.value.filter(t => t.type === '支出' && isThisMonth(t.date));
-                    const total = expenses.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                    if (total === 0) return [];
-
-                    const sums = {};
-                    expenses.forEach(t => {
-                        sums[t.category] = (sums[t.category] || 0) + (Number(t.amount) || 0);
-                    });
-
-                    let stats = Object.keys(sums).map(key => {
-                        return {
-                            name: key,
-                            amount: sums[key],
-                            percentage: ((sums[key] / total) * 100).toFixed(1)
-                        };
-                    });
-                    
-                    stats.sort((a, b) => b.amount - a.amount);
-                    return stats;
-                });
-
-                const getColorClass = (index) => colorClasses[index % colorClasses.length];
-
-                const formatMoney = (num) => {
-                    const validNum = Number(num) || 0;
-                    return '$' + Math.round(validNum).toLocaleString();
-                };
-                
-                const formatDateDisplay = (isoString) => {
-                    if (!isoString) return '';
-                    const d = new Date(isoString);
-                    if (isNaN(d.getTime())) return '';
-                    if(d.getFullYear() !== currentYear) {
-                        return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
-                    }
-                    return `${d.getMonth()+1}/${d.getDate()}`;
-                };
-
-                const saveTransaction = () => {
-                    if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
-                    if ((form.value.method === '信用卡' || form.value.type === '卡費繳款') && !form.value.cardId) {
-                        return alert('請選擇信用卡！');
-                    }
-                    
-                    const totalAmount = Number(form.value.amount);
-                    const installments = parseInt(form.value.installments) || 1;
-                    const purchaseDate = new Date(form.value.date + 'T00:00:00').toISOString();
-                    
-                    if (form.value.type === '支出' && form.value.method === '信用卡' && installments > 1) {
-                        const baseAmount = Math.floor(totalAmount / installments);
-                        const remainder = totalAmount - (baseAmount * installments);
-                        const startDate = new Date(form.value.date + 'T00:00:00');
-                        const batchId = Date.now().toString();
-
-                        for (let i = 0; i < installments; i++) {
-                            let currentAmount = baseAmount;
-                            if (i === 0) currentAmount += remainder;
-
-                            let targetDate = new Date(startDate);
-                            targetDate.setMonth(startDate.getMonth() + i);
-
-                            transactions.value.push({
-                                id: Date.now() + i,
-                                batchId: batchId,
-                                type: form.value.type,
-                                amount: currentAmount,
-                                category: form.value.category,
-                                method: form.value.method,
-                                cardId: form.value.cardId,
-                                note: form.value.note,
-                                installmentInfo: `${i+1}/${installments}期`,
-                                originalPurchaseDate: purchaseDate,
-                                date: targetDate.toISOString()
-                            });
-                        }
-                    } else {
-                        transactions.value.push({
-                            id: Date.now(),
-                            type: form.value.type,
-                            amount: totalAmount,
-                            category: form.value.category,
-                            method: form.value.type === '支出' ? form.value.method : null,
-                            cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
-                            note: form.value.note,
-                            installmentInfo: null,
-                            originalPurchaseDate: purchaseDate, 
-                            date: purchaseDate
-                        });
-                    }
-                    
-                    form.value.amount = '';
-                    form.value.note = '';
-                    form.value.date = toLocalDateString(new Date()); 
-                    form.value.installments = "1";
-                    currentTab.value = 'home';
-                };
-
-                const openEditModal = (t) => {
-                    editForm.value = { 
-                        ...t, 
-                        date: toLocalDateString(t.date),
-                        originalPurchaseDate: t.originalPurchaseDate || t.date
-                    };
-                    isEditing.value = true;
-                };
-
-                const saveEdit = () => {
-                    if (!editForm.value.amount || editForm.value.amount <= 0) return alert('金額不可為空');
-                    const index = transactions.value.findIndex(t => t.id === editForm.value.id);
-                    if (index !== -1) {
-                        transactions.value[index] = {
-                            ...transactions.value[index],
-                            amount: Number(editForm.value.amount),
-                            category: editForm.value.category,
-                            method: editForm.value.method,
-                            cardId: (editForm.value.method === '信用卡' || editForm.value.type === '卡費繳款') ? editForm.value.cardId : null,
-                            note: editForm.value.note,
-                            date: new Date(editForm.value.date + 'T00:00:00').toISOString()
-                        };
-                    }
-                    isEditing.value = false;
-                };
-
-                const deleteTransaction = () => {
-                    if(confirm('確定要刪除這筆紀錄嗎？')) {
-                        transactions.value = transactions.value.filter(t => t.id !== editForm.value.id);
-                        isEditing.value = false;
-                    }
-                };
-
-                const openCardModal = (card) => {
-                    if (card) {
-                        cardForm.value = { ...card };
-                    } else {
-                        cardForm.value = { id: null, name: '', limit: '', billingDay: '', dueDay: '' };
-                    }
-                    isCardModalOpen.value = true;
-                };
-
-                const saveCard = () => {
-                    if (!cardForm.value.name) return alert('請輸入卡片名稱');
-                    if (cardForm.value.id) {
-                        const index = creditCards.value.findIndex(c => c.id === cardForm.value.id);
-                        if(index !== -1) {
-                            creditCards.value[index] = { ...cardForm.value, limit: Number(cardForm.value.limit) };
-                        }
-                    } else {
-                        creditCards.value.push({
-                            id: Date.now(),
-                            name: cardForm.value.name,
-                            limit: Number(cardForm.value.limit),
-                            billingDay: cardForm.value.billingDay,
-                            dueDay: cardForm.value.dueDay
-                        });
-                    }
-                    isCardModalOpen.value = false;
-                };
-
-                const deleteCard = () => {
-                    if(confirm('確定要刪除這張信用卡嗎？(這不會刪除原本關聯的消費紀錄)')) {
-                        creditCards.value = creditCards.value.filter(c => c.id !== cardForm.value.id);
-                        isCardModalOpen.value = false;
-                    }
-                };
-
-                const clearData = () => {
-                    if(confirm('警告：確定要清空「所有」紀錄與設定嗎？此動作無法復原。')) {
-                        transactions.value = [];
-                        creditCards.value = [];
-                        localStorage.removeItem('moneyApp_data');
-                        localStorage.removeItem('moneyApp_settings');
-                        localStorage.removeItem('moneyApp_cards');
-                        settings.value = { income: 67000, fixedExpenses: 40000, livingBudget: 30000 };
-                    }
-                };
-
-                watch(transactions, (newVal) => localStorage.setItem('moneyApp_data', JSON.stringify(newVal)), { deep: true });
-                watch(settings, (newVal) => localStorage.setItem('moneyApp_settings', JSON.stringify(newVal)), { deep: true });
-                watch(creditCards, (newVal) => localStorage.setItem('moneyApp_cards', JSON.stringify(newVal)), { deep: true });
-
-                onMounted(() => {
-                    try {
-                        const savedData = localStorage.getItem('moneyApp_data');
-                        if (savedData) {
-                            let parsed = JSON.parse(savedData);
-                            transactions.value = parsed.map(t => ({
-                                ...t,
-                                originalPurchaseDate: t.originalPurchaseDate || t.date || new Date().toISOString()
-                            }));
-                        }
-                    } catch(e) { console.error('讀取紀錄失敗', e); }
-                    
-                    try {
-                        const savedSettings = localStorage.getItem('moneyApp_settings');
-                        if (savedSettings) settings.value = { ...settings.value, ...JSON.parse(savedSettings) };
-                    } catch(e) { console.error('讀取設定失敗', e); }
-
-                    try {
-                        const savedCards = localStorage.getItem('moneyApp_cards');
-                        if (savedCards) creditCards.value = JSON.parse(savedCards);
-                    } catch(e) { console.error('讀取信用卡失敗', e); }
-                });
-
-                return { currentTab, transactions, visibleTransactions, sortedTransactions, creditCards, settings, form, types, categories, methods,
-                         livingRemainingThisMonth, livingExpensesThisMonth, totalCardSpentThisMonth, totalCardDueThisMonth, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         formatMoney, formatDateDisplay, saveTransaction, clearData,
-                         isEditing, editForm, openEditModal, saveEdit, deleteTransaction,
-                         isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDueThisMonth, getCardBalance, getCardName,
-                         categoryStats, getColorClass };
-            }
-        }).mount('#app');
-    </script>
-</body>
-</html>
+  );
+}

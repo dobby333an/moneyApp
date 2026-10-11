@@ -6,25 +6,26 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>簡易記帳</title>
-    <!-- 引入 Tailwind CSS 快速排版 -->
+    <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 Vue.js 處理財務邏輯 -->
+    <!-- 引入 Vue.js -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f2f2f7; user-select: none; }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         .safe-top { padding-top: env(safe-area-inset-top); }
-        /* 隱藏捲軸但可滾動 */
         ::-webkit-scrollbar { display: none; }
+        /* 避免 input 聚焦時 iPhone 自動放大畫面 */
+        input[type="text"], input[type="number"], input[type="datetime-local"] { font-size: 16px; }
     </style>
 </head>
 <body class="text-gray-900 h-screen flex flex-col overflow-hidden">
-    <div id="app" class="h-full flex flex-col w-full max-w-md mx-auto bg-white sm:bg-gray-100 shadow-lg relative">
+    <div id="app" class="h-full flex flex-col w-full max-w-md mx-auto bg-[#f2f2f7] shadow-lg relative">
         
         <!-- 主要內容區 -->
-        <main class="flex-1 overflow-y-auto safe-top pb-24 bg-[#f2f2f7]">
+        <main class="flex-1 overflow-y-auto safe-top pb-24">
             
-            <!-- ====== 首頁 Dashboard ====== -->
+            <!-- ====== 1. 首頁 Dashboard ====== -->
             <div v-show="currentTab === 'home'" class="p-4 space-y-4">
                 <h1 class="text-2xl font-bold text-center mt-2">{{ currentMonthString }}</h1>
                 
@@ -35,7 +36,7 @@
                     
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-500">💰 本月收入</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(income) }}</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(settings.income) }}</span>
                     </div>
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-500">💳 信用卡已消費</span>
@@ -47,7 +48,7 @@
                     </div>
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-500">🏠 固定支出</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(fixedExpenses) }}</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(settings.fixedExpenses) }}</span>
                     </div>
                     
                     <hr class="border-gray-100">
@@ -78,15 +79,13 @@
                 </div>
             </div>
 
-            <!-- ====== 記帳頁面 ====== -->
+            <!-- ====== 2. 記帳頁面 ====== -->
             <div v-show="currentTab === 'add'" class="p-4 space-y-4">
                 <h1 class="text-2xl font-bold mt-2 mb-4">記一筆</h1>
-                
                 <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
                     <!-- 類型選擇 -->
                     <div class="flex p-1 bg-gray-100 rounded-lg">
-                        <button v-for="type in types" :key="type" 
-                                @click="form.type = type"
+                        <button v-for="type in types" :key="type" @click="form.type = type"
                                 class="flex-1 py-2 text-sm font-medium rounded-md transition-colors"
                                 :class="form.type === type ? 'bg-white shadow text-black' : 'text-gray-500'">
                             {{ type }}
@@ -112,7 +111,6 @@
                                 </button>
                             </div>
                         </div>
-
                         <div>
                             <label class="block text-sm font-bold text-gray-700 mb-2">支付方式</label>
                             <div class="flex gap-2">
@@ -132,53 +130,131 @@
                                class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
                     </div>
 
-                    <button @click="saveTransaction" 
-                            class="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl shadow-md active:bg-blue-700 transition-colors">
+                    <button @click="saveTransaction" class="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl shadow-md active:bg-blue-700 transition-colors">
                         儲存紀錄
                     </button>
                 </div>
             </div>
 
-            <!-- ====== 明細清單 ====== -->
+            <!-- ====== 3. 明細清單 ====== -->
             <div v-show="currentTab === 'list'" class="p-4 space-y-4">
                 <h1 class="text-2xl font-bold mt-2 mb-4">交易紀錄</h1>
                 <div class="bg-white rounded-2xl p-2 shadow-sm">
                     <div v-if="transactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
                     
-                    <div v-for="t in sortedTransactions" :key="t.id" class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0">
+                    <div v-for="t in sortedTransactions" :key="t.id" @click="openEditModal(t)" 
+                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors">
                         <div class="flex flex-col">
                             <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : t.type }}</span>
                             <span class="text-xs text-gray-500">{{ formatDate(t.date) }} • {{ t.method || '-' }} {{ t.note ? '• '+t.note : '' }}</span>
                         </div>
-                        <span class="font-bold" :class="t.type === '支出' ? 'text-gray-800' : (t.type === '收入' ? 'text-green-500' : 'text-blue-500')">
-                            {{ t.type === '支出' ? '-' : '+' }} {{ formatMoney(t.amount) }}
-                        </span>
+                        <div class="flex items-center space-x-3">
+                            <span class="font-bold" :class="t.type === '支出' ? 'text-gray-800' : (t.type === '收入' ? 'text-green-500' : 'text-blue-500')">
+                                {{ t.type === '支出' ? '-' : '+' }} {{ formatMoney(t.amount) }}
+                            </span>
+                            <span class="text-gray-300">›</span> <!-- 箭頭提示可點擊 -->
+                        </div>
                     </div>
                 </div>
-                <!-- 刪除所有資料（測試用） -->
-                <button @click="clearData" class="w-full py-4 text-red-400 text-sm mt-4">清空所有本機資料</button>
+            </div>
+
+            <!-- ====== 4. 設定頁面 ====== -->
+            <div v-show="currentTab === 'settings'" class="p-4 space-y-4">
+                <h1 class="text-2xl font-bold mt-2 mb-4">財務設定</h1>
+                
+                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">每月固定收入</label>
+                        <input type="number" inputmode="numeric" v-model="settings.income" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">每月固定支出</label>
+                        <input type="number" inputmode="numeric" v-model="settings.fixedExpenses" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-blue-600 mb-2">生活費預算 (可自訂修改)</label>
+                        <input type="number" inputmode="numeric" v-model="settings.livingBudget" class="w-full text-xl font-bold text-blue-700 bg-blue-50 p-3 rounded-xl border-0">
+                        <p class="text-xs text-gray-400 mt-2">系統預設為「收入 - 固定支出」，但你也可以直接手動修改此欄位來決定生活費上限。</p>
+                    </div>
+                </div>
+                
+                <button @click="clearData" class="w-full py-4 text-red-500 bg-white rounded-2xl font-bold shadow-sm mt-4">
+                    清空所有手機端紀錄
+                </button>
             </div>
             
         </main>
 
         <!-- ====== 底部導航列 ====== -->
         <nav class="absolute bottom-0 w-full bg-white border-t border-gray-200 safe-bottom">
-            <div class="flex justify-around items-center h-16">
-                <button @click="currentTab = 'home'" class="flex-1 flex flex-col items-center justify-center space-y-1" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
+            <div class="flex justify-around items-center h-16 px-2">
+                <button @click="currentTab = 'home'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
                     <span class="text-xl">🏠</span>
-                    <span class="text-[10px] font-medium">總覽</span>
+                    <span class="text-[10px] font-medium mt-1">總覽</span>
                 </button>
-                <div class="flex-1 flex justify-center items-center">
-                    <button @click="currentTab = 'add'" class="w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform -translate-y-4 border-4 border-white">
+                <button @click="currentTab = 'list'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'list' ? 'text-blue-600' : 'text-gray-400'">
+                    <span class="text-xl">📋</span>
+                    <span class="text-[10px] font-medium mt-1">明細</span>
+                </button>
+                
+                <!-- 中間懸浮大按鈕 -->
+                <div class="flex justify-center items-center -mt-6">
+                    <button @click="currentTab = 'add'" class="w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform border-4 border-white">
                         <span class="text-2xl font-bold">+</span>
                     </button>
                 </div>
-                <button @click="currentTab = 'list'" class="flex-1 flex flex-col items-center justify-center space-y-1" :class="currentTab === 'list' ? 'text-blue-600' : 'text-gray-400'">
-                    <span class="text-xl">📋</span>
-                    <span class="text-[10px] font-medium">明細</span>
+                
+                <button @click="currentTab = 'settings'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'settings' ? 'text-blue-600' : 'text-gray-400'">
+                    <span class="text-xl">⚙️</span>
+                    <span class="text-[10px] font-medium mt-1">設定</span>
                 </button>
             </div>
         </nav>
+
+        <!-- ====== 編輯紀錄彈窗 (Modal) ====== -->
+        <div v-if="isEditing" class="absolute inset-0 z-50 flex items-end justify-center bg-black bg-opacity-40" @click.self="isEditing = false">
+            <div class="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 safe-bottom space-y-4 shadow-2xl animate-slide-up">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-xl font-bold">修改紀錄</h2>
+                    <button @click="isEditing = false" class="text-gray-400 bg-gray-100 rounded-full w-8 h-8 flex justify-center items-center font-bold">✕</button>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">金額</label>
+                    <input type="number" inputmode="decimal" v-model="editForm.amount" class="w-full text-2xl font-bold bg-gray-50 p-3 rounded-xl border-0">
+                </div>
+                
+                <template v-if="editForm.type === '支出'">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">分類</label>
+                        <select v-model="editForm.category" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                            <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">支付方式</label>
+                        <select v-model="editForm.method" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                            <option v-for="method in methods" :key="method" :value="method">{{ method }}</option>
+                        </select>
+                    </div>
+                </template>
+
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">日期</label>
+                    <input type="datetime-local" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">備註</label>
+                    <input type="text" v-model="editForm.note" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                </div>
+
+                <div class="flex gap-3 pt-2">
+                    <button @click="deleteTransaction" class="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">刪除</button>
+                    <button @click="saveEdit" class="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl">儲存修改</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 財務邏輯 -->
@@ -189,8 +265,18 @@
             setup() {
                 const currentTab = ref('home');
                 const transactions = ref([]);
-                const income = ref(67000); // 預設月收入
-                const fixedExpenses = ref(40000); // 預設固定支出
+                
+                // 設定資料預設值
+                const settings = ref({
+                    income: 67000,
+                    fixedExpenses: 40000,
+                    livingBudget: 27000
+                });
+                
+                // 當使用者修改收入或固定支出時，自動重新計算生活費預算
+                watch(() => [settings.value.income, settings.value.fixedExpenses], ([newIncome, newFixed]) => {
+                    settings.value.livingBudget = newIncome - newFixed;
+                });
                 
                 // 表單狀態
                 const types = ['支出', '收入', '卡費繳款'];
@@ -199,19 +285,21 @@
                 
                 const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '' });
 
+                // 修改狀態 (Modal)
+                const isEditing = ref(false);
+                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '' });
+
                 // ----- 核心計算邏輯 -----
-                const livingBudget = computed(() => income.value - fixedExpenses.value);
-                
-                // 一般生活花費 (排除卡費繳款)
                 const livingExpenses = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出')
                         .reduce((sum, t) => sum + t.amount, 0);
                 });
 
-                const livingRemaining = computed(() => livingBudget.value - livingExpenses.value);
+                // 生活費剩餘 = 自訂的生活費預算 - 總支出
+                const livingRemaining = computed(() => settings.value.livingBudget - livingExpenses.value);
                 
-                // 信用卡邏輯 (分開計算)
+                // 信用卡邏輯
                 const cardSpent = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出' && t.method === '信用卡')
@@ -235,8 +323,8 @@
 
                 const todayAverage = computed(() => livingRemaining.value / daysLeft.value);
                 const expensePercentage = computed(() => {
-                    if(livingBudget.value <= 0) return 0;
-                    return ((livingExpenses.value / livingBudget.value) * 100).toFixed(1);
+                    if(settings.value.livingBudget <= 0) return 0;
+                    return ((livingExpenses.value / settings.value.livingBudget) * 100).toFixed(1);
                 });
 
                 const currentMonthString = computed(() => {
@@ -245,19 +333,25 @@
                 });
 
                 const sortedTransactions = computed(() => {
-                    return [...transactions.value].sort((a, b) => b.id - a.id); // 最新在前
+                    return [...transactions.value].sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
 
-                // ----- 方法 -----
-                const formatMoney = (num) => {
-                    return '$' + Number(Math.round(num)).toLocaleString();
-                };
+                // ----- 工具方法 -----
+                const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
                 
                 const formatDate = (isoString) => {
                     const d = new Date(isoString);
-                    return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+                    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
                 };
 
+                // 將 ISO 日期轉為 input[type="datetime-local"] 可以讀取的格式 (YYYY-MM-DDTHH:mm)
+                const toLocalDatetimeString = (isoString) => {
+                    const d = new Date(isoString);
+                    const tzOffset = d.getTimezoneOffset() * 60000;
+                    return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
+                };
+
+                // ----- 操作方法 -----
                 const saveTransaction = () => {
                     if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
                     
@@ -271,36 +365,94 @@
                         date: new Date().toISOString()
                     });
                     
-                    // 重置表單並回首頁
                     form.value.amount = '';
                     form.value.note = '';
                     currentTab.value = 'home';
                 };
 
-                const clearData = () => {
-                    if(confirm('確定要清空所有紀錄嗎？')) {
-                        transactions.value = [];
-                        localStorage.removeItem('moneyApp_data');
+                // 打開編輯視窗
+                const openEditModal = (t) => {
+                    editForm.value = { 
+                        id: t.id, 
+                        type: t.type,
+                        amount: t.amount, 
+                        category: t.category, 
+                        method: t.method, 
+                        note: t.note,
+                        date: toLocalDatetimeString(t.date) // 轉換格式以便顯示在 input 中
+                    };
+                    isEditing.value = true;
+                };
+
+                // 儲存修改
+                const saveEdit = () => {
+                    if (!editForm.value.amount || editForm.value.amount <= 0) return alert('金額不可為空');
+                    const index = transactions.value.findIndex(t => t.id === editForm.value.id);
+                    if (index !== -1) {
+                        transactions.value[index] = {
+                            ...transactions.value[index],
+                            amount: Number(editForm.value.amount),
+                            category: editForm.value.category,
+                            method: editForm.value.method,
+                            note: editForm.value.note,
+                            date: new Date(editForm.value.date).toISOString() // 轉回 ISO 格式儲存
+                        };
+                    }
+                    isEditing.value = false;
+                };
+
+                // 刪除紀錄
+                const deleteTransaction = () => {
+                    if(confirm('確定要刪除這筆紀錄嗎？')) {
+                        transactions.value = transactions.value.filter(t => t.id !== editForm.value.id);
+                        isEditing.value = false;
                     }
                 };
 
-                // ----- 本機儲存 (LocalStorage) -----
+                // 清空全部紀錄
+                const clearData = () => {
+                    if(confirm('警告：確定要清空「所有」紀錄與設定嗎？此動作無法復原。')) {
+                        transactions.value = [];
+                        localStorage.removeItem('moneyApp_data');
+                        localStorage.removeItem('moneyApp_settings');
+                        settings.value = { income: 67000, fixedExpenses: 40000, livingBudget: 27000 };
+                    }
+                };
+
+                // ----- 本機儲存 (LocalStorage) 自動儲存機制 -----
                 watch(transactions, (newVal) => {
                     localStorage.setItem('moneyApp_data', JSON.stringify(newVal));
                 }, { deep: true });
 
+                watch(settings, (newVal) => {
+                    localStorage.setItem('moneyApp_settings', JSON.stringify(newVal));
+                }, { deep: true });
+
+                // 網頁載入時讀取舊資料
                 onMounted(() => {
-                    const saved = localStorage.getItem('moneyApp_data');
-                    if (saved) {
-                        transactions.value = JSON.parse(saved);
-                    }
+                    const savedData = localStorage.getItem('moneyApp_data');
+                    if (savedData) transactions.value = JSON.parse(savedData);
+                    
+                    const savedSettings = localStorage.getItem('moneyApp_settings');
+                    if (savedSettings) settings.value = JSON.parse(savedSettings);
                 });
 
-                return { currentTab, transactions, income, fixedExpenses, form, types, categories, methods,
+                return { currentTab, transactions, settings, form, types, categories, methods,
                          livingRemaining, cardSpent, cardDue, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         sortedTransactions, formatMoney, formatDate, saveTransaction, clearData };
+                         sortedTransactions, formatMoney, formatDate, saveTransaction, clearData,
+                         isEditing, editForm, openEditModal, saveEdit, deleteTransaction };
             }
         }).mount('#app');
     </script>
+    <style>
+        /* 簡單的由下往上滑入動畫 */
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .animate-slide-up {
+            animation: slideUp 0.3s ease-out forwards;
+        }
+    </style>
 </body>
 </html>

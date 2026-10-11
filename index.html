@@ -75,7 +75,7 @@
                     <p v-if="expensePercentage > 80" class="text-xs text-red-500 font-medium">⚠️ 警告：本月生活費已使用超過 80%</p>
                 </div>
 
-                <!-- 交易紀錄 (明細) 移至總覽下方 -->
+                <!-- 交易紀錄 (明細) -->
                 <h2 class="text-xl font-bold text-gray-800 mt-6 mb-2 ml-1">交易紀錄</h2>
                 <div class="bg-white rounded-2xl p-2 shadow-sm mb-6">
                     <div v-if="transactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
@@ -113,7 +113,6 @@
                 </div>
 
                 <div v-for="card in creditCards" :key="card.id" @click="openCardModal(card)" class="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 shadow-md text-white active:scale-95 transition-transform cursor-pointer relative overflow-hidden">
-                    <!-- 裝飾用晶片與Logo -->
                     <div class="absolute top-5 right-5 text-gray-400 opacity-50 text-2xl font-black italic">VISA</div>
                     <div class="w-10 h-8 bg-yellow-600 rounded-md opacity-80 mb-4"></div>
                     
@@ -176,7 +175,6 @@
                                 </button>
                             </div>
                             
-                            <!-- 選擇哪張信用卡 -->
                             <div v-if="form.method === '信用卡'" class="animate-fade-in">
                                 <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold mt-1">
                                     <option disabled value="">請選擇信用卡</option>
@@ -199,7 +197,13 @@
                         </div>
                     </template>
 
-                    <!-- 備註 -->
+                    <!-- 日期與備註 -->
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">日期時間</label>
+                        <input type="datetime-local" v-model="form.date" 
+                               class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
+                    </div>
+
                     <div>
                         <label class="block text-sm font-bold text-gray-700 mb-2">備註 (選填)</label>
                         <input type="text" v-model="form.note" placeholder="例如：跟朋友聚餐" 
@@ -218,16 +222,18 @@
                 
                 <div class="bg-white rounded-2xl p-5 shadow-sm space-y-5">
                     <div>
+                        <label class="block text-sm font-bold text-blue-600 mb-2">每月生活費預算</label>
+                        <input type="number" inputmode="numeric" v-model="settings.livingBudget" class="w-full text-xl font-bold text-blue-700 bg-blue-50 p-3 rounded-xl border-0">
+                        <p class="text-xs text-gray-400 mt-2">設定你每個月可使用的生活費上限，可隨時自由修改。</p>
+                    </div>
+                    <hr class="border-gray-100">
+                    <div>
                         <label class="block text-sm font-bold text-gray-700 mb-2">每月固定收入</label>
                         <input type="number" inputmode="numeric" v-model="settings.income" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
                     </div>
                     <div>
                         <label class="block text-sm font-bold text-gray-700 mb-2">每月固定支出</label>
                         <input type="number" inputmode="numeric" v-model="settings.fixedExpenses" class="w-full text-xl bg-gray-50 p-3 rounded-xl border-0">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-blue-600 mb-2">生活費預算 (可自訂修改)</label>
-                        <input type="number" inputmode="numeric" v-model="settings.livingBudget" class="w-full text-xl font-bold text-blue-700 bg-blue-50 p-3 rounded-xl border-0">
                     </div>
                 </div>
                 
@@ -308,7 +314,7 @@
                 </template>
 
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">日期</label>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">日期時間</label>
                     <input type="datetime-local" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
                 </div>
                 <div>
@@ -372,26 +378,28 @@
                 const settings = ref({
                     income: 67000,
                     fixedExpenses: 40000,
-                    livingBudget: 27000
+                    livingBudget: 30000 // 取消連動後，設定一個合理的預設值
                 });
                 
-                watch(() => [settings.value.income, settings.value.fixedExpenses], ([newIncome, newFixed]) => {
-                    settings.value.livingBudget = newIncome - newFixed;
-                });
-                
+                // 將 ISO 日期轉為 input[type="datetime-local"] 可讀取的格式
+                const toLocalDatetimeString = (dateObjOrString) => {
+                    const d = new Date(dateObjOrString);
+                    const tzOffset = d.getTimezoneOffset() * 60000;
+                    return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
+                };
+
                 const types = ['支出', '收入', '卡費繳款'];
                 const categories = ['🍚 餐飲', '🛒 日用', '🚗 交通', '🎮 娛樂', '🛍 購物', '👨‍👩‍👧 家庭', '🏠 房租', '📦 其他'];
                 const methods = ['現金', '信用卡', '轉帳'];
                 
-                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '', cardId: '' });
+                // 表單加入預設日期為當下
+                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '', cardId: '', date: toLocalDatetimeString(new Date()) });
                 const isEditing = ref(false);
                 const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '' });
 
-                // 信用卡 Modal 狀態
                 const isCardModalOpen = ref(false);
                 const cardForm = ref({ id: null, name: '', limit: '', billingDay: '', dueDay: '' });
 
-                // ----- 當選擇信用卡時，自動帶入第一張卡 -----
                 watch(() => form.value.method, (newVal) => {
                     if (newVal === '信用卡' && creditCards.value.length > 0 && !form.value.cardId) {
                         form.value.cardId = creditCards.value[0].id;
@@ -408,9 +416,9 @@
                     return transactions.value.filter(t => t.type === '支出').reduce((sum, t) => sum + t.amount, 0);
                 });
 
+                // 生活費剩餘完全看設定值
                 const livingRemaining = computed(() => settings.value.livingBudget - livingExpenses.value);
                 
-                // 信用卡整體統計 (首頁總覽用)
                 const totalCardSpent = computed(() => {
                     return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡').reduce((sum, t) => sum + t.amount, 0);
                 });
@@ -419,7 +427,6 @@
                 });
                 const totalCardDue = computed(() => Math.max(totalCardSpent.value - totalCardPaid.value, 0));
 
-                // 單一信用卡計算 (卡片管理用)
                 const getCardSpent = (cardId) => {
                     return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
                 };
@@ -460,16 +467,10 @@
                     return [...transactions.value].sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
 
-                // ----- 工具方法 -----
                 const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
                 const formatDate = (isoString) => {
                     const d = new Date(isoString);
                     return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-                };
-                const toLocalDatetimeString = (isoString) => {
-                    const d = new Date(isoString);
-                    const tzOffset = d.getTimezoneOffset() * 60000;
-                    return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
                 };
 
                 // ----- 記帳操作 -----
@@ -487,11 +488,12 @@
                         method: form.value.type === '支出' ? form.value.method : null,
                         cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
                         note: form.value.note,
-                        date: new Date().toISOString()
+                        date: new Date(form.value.date).toISOString() // 採用使用者設定的時間
                     });
                     
                     form.value.amount = '';
                     form.value.note = '';
+                    form.value.date = toLocalDatetimeString(new Date()); // 重置為當前時間
                     currentTab.value = 'home';
                 };
 
@@ -537,13 +539,11 @@
                 const saveCard = () => {
                     if (!cardForm.value.name) return alert('請輸入卡片名稱');
                     if (cardForm.value.id) {
-                        // 更新
                         const index = creditCards.value.findIndex(c => c.id === cardForm.value.id);
                         if(index !== -1) {
                             creditCards.value[index] = { ...cardForm.value, limit: Number(cardForm.value.limit) };
                         }
                     } else {
-                        // 新增
                         creditCards.value.push({
                             id: Date.now(),
                             name: cardForm.value.name,
@@ -569,7 +569,7 @@
                         localStorage.removeItem('moneyApp_data');
                         localStorage.removeItem('moneyApp_settings');
                         localStorage.removeItem('moneyApp_cards');
-                        settings.value = { income: 67000, fixedExpenses: 40000, livingBudget: 27000 };
+                        settings.value = { income: 67000, fixedExpenses: 40000, livingBudget: 30000 };
                     }
                 };
 

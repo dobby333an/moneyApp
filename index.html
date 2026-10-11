@@ -76,24 +76,36 @@
                 </div>
 
                 <!-- 交易紀錄 (明細) -->
-                <h2 class="text-xl font-bold text-gray-800 mt-6 mb-2 ml-1">所有紀錄 (含未來分期)</h2>
+                <div class="flex justify-between items-end mt-6 mb-2 ml-1 pr-1">
+                    <h2 class="text-xl font-bold text-gray-800">所有紀錄</h2>
+                    <span class="text-xs text-gray-500">(未來的分期將於該月自動出現)</span>
+                </div>
                 <div class="bg-white rounded-2xl p-2 shadow-sm mb-6">
-                    <div v-if="transactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
+                    <!-- 只顯示本月及以前的紀錄 -->
+                    <div v-if="visibleTransactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
                     
-                    <div v-for="t in sortedTransactions" :key="t.id" @click="openEditModal(t)" 
-                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors"
-                         :class="isFutureTransaction(t.date) ? 'opacity-50 bg-gray-50' : ''">
+                    <div v-for="t in visibleTransactions" :key="t.id" @click="openEditModal(t)" 
+                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors">
                         <div class="flex flex-col">
                             <div class="flex items-center gap-1">
                                 <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : (t.type === '卡費繳款' ? '信用卡繳款' : t.type) }}</span>
                                 <span v-if="t.installmentInfo" class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{{ t.installmentInfo }}</span>
                             </div>
-                            <span class="text-xs text-gray-500 mt-0.5">
-                                {{ formatDateDisplay(t.date) }} • 
-                                {{ t.method || '-' }} 
-                                <span v-if="t.cardId && getCardName(t.cardId)"> ({{ getCardName(t.cardId) }})</span>
-                                {{ t.note ? ' • '+t.note : '' }}
-                            </span>
+                            <div class="flex flex-col mt-1">
+                                <!-- 雙日期顯示：入帳日 與 消費日 -->
+                                <span class="text-xs font-medium text-gray-600">
+                                    入帳: {{ formatDateDisplay(t.date) }}
+                                </span>
+                                <span v-if="t.originalPurchaseDate && t.originalPurchaseDate !== t.date" class="text-[10px] text-gray-400">
+                                    消費: {{ formatDateDisplay(t.originalPurchaseDate) }}
+                                </span>
+                                
+                                <span class="text-xs text-gray-500 mt-0.5">
+                                    {{ t.method || '-' }} 
+                                    <span v-if="t.cardId && getCardName(t.cardId)"> ({{ getCardName(t.cardId) }})</span>
+                                    {{ t.note ? ' • '+t.note : '' }}
+                                </span>
+                            </div>
                         </div>
                         <div class="flex items-center space-x-3">
                             <span class="font-bold" :class="(t.type === '支出' || t.type === '卡費繳款') ? 'text-gray-800' : 'text-green-500'">
@@ -200,7 +212,7 @@
                                     </select>
                                 </div>
                                 <p v-if="form.installments > 1 && form.amount" class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1">
-                                    💡 系統將自動拆成 {{ form.installments }} 筆，每期約 {{ formatMoney(form.amount / form.installments) }}
+                                    💡 將自動拆分為 {{ form.installments }} 期。<br>後續月份的款項將在該月自動出現，不影響本月預算。
                                 </p>
                             </div>
                         </div>
@@ -220,9 +232,10 @@
 
                     <!-- 日期與備註 -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">首期日期</label>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">消費日期</label>
                         <input type="date" v-model="form.date" 
                                class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
+                        <p v-if="form.installments > 1" class="text-xs text-gray-500 mt-1">第一期入帳日為此日，後續每期將自動加一個月。</p>
                     </div>
 
                     <div>
@@ -345,9 +358,11 @@
                     <h2 class="text-xl font-bold">修改紀錄</h2>
                     <button @click="isEditing = false" class="text-gray-400 bg-gray-100 rounded-full w-8 h-8 flex justify-center items-center font-bold">✕</button>
                 </div>
+                
                 <p v-if="editForm.installmentInfo" class="text-xs text-blue-600 bg-blue-50 p-2 rounded">
-                    這是一筆分期消費，目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期紀錄。
+                    這是一筆分期消費（原本消費日：{{ formatDateDisplay(editForm.originalPurchaseDate) }}），目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期紀錄。
                 </p>
+
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1">金額</label>
                     <input type="number" inputmode="decimal" v-model="editForm.amount" class="w-full text-2xl font-bold bg-gray-50 p-3 rounded-xl border-0">
@@ -384,7 +399,7 @@
                 </template>
 
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">日期</label>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">入帳日期</label>
                     <input type="date" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
                 </div>
                 <div>
@@ -465,7 +480,7 @@
                 
                 const form = ref({ type: '支出', amount: '', category: '🛍 購物', method: '現金', note: '', cardId: '', date: toLocalDateString(new Date()), installments: "1" });
                 const isEditing = ref(false);
-                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '', installmentInfo: '' });
+                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '', installmentInfo: '', originalPurchaseDate: '' });
 
                 const isCardModalOpen = ref(false);
                 const cardForm = ref({ id: null, name: '', limit: '', billingDay: '', dueDay: '' });
@@ -503,7 +518,7 @@
                     return d.getFullYear() > currentYear || (d.getFullYear() === currentYear && d.getMonth() > currentMonth);
                 };
 
-                // ----- 核心計算邏輯 (修改為只算本月或以前，忽略未來的分期) -----
+                // ----- 核心計算邏輯 (只算本月或以前，忽略未來的分期) -----
                 const livingExpensesThisMonth = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出' && !isFutureTransaction(t.date))
@@ -526,7 +541,6 @@
                 
                 const totalCardDueThisMonth = computed(() => Math.max(totalCardSpentThisMonth.value - totalCardPaidThisMonth.value, 0));
 
-                // 卡片管理：特定卡片的本期待繳 (只算本月與以前)
                 const getCardSpentThisMonth = (cardId) => {
                     return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + t.amount, 0);
                 };
@@ -537,7 +551,7 @@
                     return Math.max(getCardSpentThisMonth(cardId) - getCardPaidThisMonth(cardId), 0);
                 };
 
-                // 卡片管理：額度扣除 (算入所有未來的分期，因為額度已經被佔用了)
+                // 額度扣除：算入所有未來的分期，因為額度已經被佔用了
                 const getCardBalance = (cardId) => {
                     const card = creditCards.value.find(c => c.id === cardId);
                     if(!card) return 0;
@@ -569,11 +583,14 @@
                     return `${d.getFullYear()}年${d.getMonth() + 1}月`;
                 });
 
-                const sortedTransactions = computed(() => {
-                    return [...transactions.value].sort((a, b) => new Date(b.date) - new Date(a.date));
+                // 首頁明細過濾：隱藏未來期數的帳款，只顯示本月與以前的，且依入帳日期新到舊排序
+                const visibleTransactions = computed(() => {
+                    return transactions.value
+                        .filter(t => !isFutureTransaction(t.date))
+                        .sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
 
-                // ----- 統計邏輯 (只算本月) -----
+                // 統計邏輯 (只算本月)
                 const categoryStats = computed(() => {
                     const expenses = transactions.value.filter(t => t.type === '支出' && isThisMonth(t.date));
                     const total = expenses.reduce((sum, t) => sum + t.amount, 0);
@@ -598,18 +615,18 @@
 
                 const getColorClass = (index) => colorClasses[index % colorClasses.length];
 
-                // ----- 工具方法 -----
+                // 工具方法
                 const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
                 const formatDateDisplay = (isoString) => {
+                    if (!isoString) return '';
                     const d = new Date(isoString);
-                    // 如果不是今年，顯示年份
                     if(d.getFullYear() !== currentYear) {
                         return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
                     }
                     return `${d.getMonth()+1}/${d.getDate()}`;
                 };
 
-                // ----- 記帳操作 (支援分期拆單) -----
+                // ----- 記帳操作 (支援分期拆單並記錄原始消費日) -----
                 const saveTransaction = () => {
                     if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
                     if ((form.value.method === '信用卡' || form.value.type === '卡費繳款') && !form.value.cardId) {
@@ -618,25 +635,23 @@
                     
                     const totalAmount = Number(form.value.amount);
                     const installments = parseInt(form.value.installments) || 1;
+                    const purchaseDate = new Date(form.value.date + 'T00:00:00').toISOString(); // 真正的消費日
                     
                     if (form.value.type === '支出' && form.value.method === '信用卡' && installments > 1) {
-                        // 處理分期邏輯
                         const baseAmount = Math.floor(totalAmount / installments);
                         const remainder = totalAmount - (baseAmount * installments);
                         const startDate = new Date(form.value.date + 'T00:00:00');
-                        const batchId = Date.now().toString(); // 用來標記這批分期是同一次建立的
+                        const batchId = Date.now().toString();
 
                         for (let i = 0; i < installments; i++) {
-                            // 計算這期的金額 (餘數加在第一期)
                             let currentAmount = baseAmount;
                             if (i === 0) currentAmount += remainder;
 
-                            // 計算這期的日期 (每期加一個月)
                             let targetDate = new Date(startDate);
                             targetDate.setMonth(startDate.getMonth() + i);
 
                             transactions.value.push({
-                                id: Date.now() + i, // 確保 ID 唯一
+                                id: Date.now() + i,
                                 batchId: batchId,
                                 type: form.value.type,
                                 amount: currentAmount,
@@ -645,11 +660,11 @@
                                 cardId: form.value.cardId,
                                 note: form.value.note,
                                 installmentInfo: `${i+1}/${installments}期`,
-                                date: targetDate.toISOString()
+                                originalPurchaseDate: purchaseDate, // 記錄原本買的那一天
+                                date: targetDate.toISOString()      // 記錄這期入帳是哪一天
                             });
                         }
                     } else {
-                        // 一般單筆紀錄
                         transactions.value.push({
                             id: Date.now(),
                             type: form.value.type,
@@ -659,7 +674,8 @@
                             cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
                             note: form.value.note,
                             installmentInfo: null,
-                            date: new Date(form.value.date + 'T00:00:00').toISOString()
+                            originalPurchaseDate: purchaseDate, 
+                            date: purchaseDate
                         });
                     }
                     
@@ -671,7 +687,11 @@
                 };
 
                 const openEditModal = (t) => {
-                    editForm.value = { ...t, date: toLocalDateString(t.date) };
+                    editForm.value = { 
+                        ...t, 
+                        date: toLocalDateString(t.date),
+                        originalPurchaseDate: t.originalPurchaseDate || t.date
+                    };
                     isEditing.value = true;
                 };
 
@@ -760,11 +780,18 @@
 
                     const savedCards = localStorage.getItem('moneyApp_cards');
                     if (savedCards) creditCards.value = JSON.parse(savedCards);
+                    
+                    // 為了向下相容，幫舊資料補上 originalPurchaseDate
+                    transactions.value.forEach(t => {
+                        if (!t.originalPurchaseDate) {
+                            t.originalPurchaseDate = t.date;
+                        }
+                    });
                 });
 
-                return { currentTab, transactions, creditCards, settings, form, types, categories, methods,
+                return { currentTab, transactions, visibleTransactions, creditCards, settings, form, types, categories, methods,
                          livingRemainingThisMonth, livingExpensesThisMonth, totalCardSpentThisMonth, totalCardDueThisMonth, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         sortedTransactions, isFutureTransaction, formatMoney, formatDateDisplay, saveTransaction, clearData,
+                         sortedTransactions, formatMoney, formatDateDisplay, saveTransaction, clearData,
                          isEditing, editForm, openEditModal, saveEdit, deleteTransaction,
                          isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDueThisMonth, getCardBalance, getCardName,
                          categoryStats, getColorClass };

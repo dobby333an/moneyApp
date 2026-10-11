@@ -78,10 +78,9 @@
                 <!-- 交易紀錄 (明細) -->
                 <div class="flex justify-between items-end mt-6 mb-2 ml-1 pr-1">
                     <h2 class="text-xl font-bold text-gray-800">所有紀錄</h2>
-                    <span class="text-xs text-gray-500">(未來的分期將於該月自動出現)</span>
+                    <span class="text-xs text-gray-500">(未來的分期將於該月出現)</span>
                 </div>
                 <div class="bg-white rounded-2xl p-2 shadow-sm mb-6">
-                    <!-- 只顯示本月及以前的紀錄 -->
                     <div v-if="visibleTransactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
                     
                     <div v-for="t in visibleTransactions" :key="t.id" @click="openEditModal(t)" 
@@ -92,11 +91,10 @@
                                 <span v-if="t.installmentInfo" class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{{ t.installmentInfo }}</span>
                             </div>
                             <div class="flex flex-col mt-1">
-                                <!-- 雙日期顯示：入帳日 與 消費日 -->
                                 <span class="text-xs font-medium text-gray-600">
                                     入帳: {{ formatDateDisplay(t.date) }}
                                 </span>
-                                <span v-if="t.originalPurchaseDate && t.originalPurchaseDate !== t.date" class="text-[10px] text-gray-400">
+                                <span v-if="t.originalPurchaseDate && formatDateDisplay(t.originalPurchaseDate) !== formatDateDisplay(t.date)" class="text-[10px] text-gray-400">
                                     消費: {{ formatDateDisplay(t.originalPurchaseDate) }}
                                 </span>
                                 
@@ -360,7 +358,7 @@
                 </div>
                 
                 <p v-if="editForm.installmentInfo" class="text-xs text-blue-600 bg-blue-50 p-2 rounded">
-                    這是一筆分期消費（原本消費日：{{ formatDateDisplay(editForm.originalPurchaseDate) }}），目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期紀錄。
+                    這是一筆分期消費（消費日：{{ formatDateDisplay(editForm.originalPurchaseDate) }}），目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期。
                 </p>
 
                 <div>
@@ -504,7 +502,7 @@
                     }
                 });
 
-                // ----- 日期判斷邏輯 (關鍵：區分本月與未來) -----
+                // ----- 日期判斷邏輯 -----
                 const currentYear = new Date().getFullYear();
                 const currentMonth = new Date().getMonth();
 
@@ -518,7 +516,7 @@
                     return d.getFullYear() > currentYear || (d.getFullYear() === currentYear && d.getMonth() > currentMonth);
                 };
 
-                // ----- 核心計算邏輯 (只算本月或以前，忽略未來的分期) -----
+                // ----- 核心計算邏輯 (只算本月或以前) -----
                 const livingExpensesThisMonth = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出' && !isFutureTransaction(t.date))
@@ -551,7 +549,7 @@
                     return Math.max(getCardSpentThisMonth(cardId) - getCardPaidThisMonth(cardId), 0);
                 };
 
-                // 額度扣除：算入所有未來的分期，因為額度已經被佔用了
+                // 額度扣除：算入所有分期
                 const getCardBalance = (cardId) => {
                     const card = creditCards.value.find(c => c.id === cardId);
                     if(!card) return 0;
@@ -626,7 +624,7 @@
                     return `${d.getMonth()+1}/${d.getDate()}`;
                 };
 
-                // ----- 記帳操作 (支援分期拆單並記錄原始消費日) -----
+                // ----- 記帳操作 (支援分期) -----
                 const saveTransaction = () => {
                     if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
                     if ((form.value.method === '信用卡' || form.value.type === '卡費繳款') && !form.value.cardId) {
@@ -781,7 +779,6 @@
                     const savedCards = localStorage.getItem('moneyApp_cards');
                     if (savedCards) creditCards.value = JSON.parse(savedCards);
                     
-                    // 為了向下相容，幫舊資料補上 originalPurchaseDate
                     transactions.value.forEach(t => {
                         if (!t.originalPurchaseDate) {
                             t.originalPurchaseDate = t.date;
@@ -791,7 +788,7 @@
 
                 return { currentTab, transactions, visibleTransactions, creditCards, settings, form, types, categories, methods,
                          livingRemainingThisMonth, livingExpensesThisMonth, totalCardSpentThisMonth, totalCardDueThisMonth, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         sortedTransactions, formatMoney, formatDateDisplay, saveTransaction, clearData,
+                         sortedTransactions, isFutureTransaction, formatMoney, formatDateDisplay, saveTransaction, clearData,
                          isEditing, editForm, openEditModal, saveEdit, deleteTransaction,
                          isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDueThisMonth, getCardBalance, getCardName,
                          categoryStats, getColorClass };

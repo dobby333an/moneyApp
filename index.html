@@ -14,10 +14,12 @@
         .safe-top { padding-top: env(safe-area-inset-top); }
         ::-webkit-scrollbar { display: none; }
         input[type="text"], input[type="number"], input[type="date"], select { font-size: 16px; }
+        /* 避免 Vue 還沒載入前出現亂碼 */
+        [v-cloak] { display: none !important; }
     </style>
 </head>
 <body class="text-gray-900 h-screen flex flex-col overflow-hidden">
-    <div id="app" class="h-full flex flex-col w-full max-w-md mx-auto bg-[#f2f2f7] shadow-lg relative">
+    <div id="app" v-cloak class="h-full flex flex-col w-full max-w-md mx-auto bg-[#f2f2f7] shadow-lg relative">
         
         <!-- 主要內容區 -->
         <main class="flex-1 overflow-y-auto safe-top pb-24">
@@ -464,8 +466,11 @@
                     livingBudget: 30000
                 });
                 
+                // 更安全的日期格式轉換，防止舊資料造成當機
                 const toLocalDateString = (dateObjOrString) => {
+                    if (!dateObjOrString) return '';
                     const d = new Date(dateObjOrString);
+                    if (isNaN(d.getTime())) return '';
                     const year = d.getFullYear();
                     const month = String(d.getMonth() + 1).padStart(2, '0');
                     const day = String(d.getDate()).padStart(2, '0');
@@ -502,17 +507,21 @@
                     }
                 });
 
-                // ----- 日期判斷邏輯 -----
+                // ----- 日期判斷邏輯 (加入防護) -----
                 const currentYear = new Date().getFullYear();
                 const currentMonth = new Date().getMonth();
 
                 const isThisMonth = (isoDateString) => {
+                    if (!isoDateString) return false;
                     const d = new Date(isoDateString);
+                    if (isNaN(d.getTime())) return false;
                     return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
                 };
 
                 const isFutureTransaction = (isoDateString) => {
+                    if (!isoDateString) return false;
                     const d = new Date(isoDateString);
+                    if (isNaN(d.getTime())) return false;
                     return d.getFullYear() > currentYear || (d.getFullYear() === currentYear && d.getMonth() > currentMonth);
                 };
 
@@ -520,30 +529,30 @@
                 const livingExpensesThisMonth = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + t.amount, 0);
+                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                 });
 
-                const livingRemainingThisMonth = computed(() => settings.value.livingBudget - livingExpensesThisMonth.value);
+                const livingRemainingThisMonth = computed(() => (Number(settings.value.livingBudget) || 0) - livingExpensesThisMonth.value);
                 
                 const totalCardSpentThisMonth = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '支出' && t.method === '信用卡' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + t.amount, 0);
+                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                 });
                 
                 const totalCardPaidThisMonth = computed(() => {
                     return transactions.value
                         .filter(t => t.type === '卡費繳款' && !isFutureTransaction(t.date))
-                        .reduce((sum, t) => sum + t.amount, 0);
+                        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                 });
                 
                 const totalCardDueThisMonth = computed(() => Math.max(totalCardSpentThisMonth.value - totalCardPaidThisMonth.value, 0));
 
                 const getCardSpentThisMonth = (cardId) => {
-                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + t.amount, 0);
+                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                 };
                 const getCardPaidThisMonth = (cardId) => {
-                    return transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + t.amount, 0);
+                    return transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                 };
                 const getCardDueThisMonth = (cardId) => {
                     return Math.max(getCardSpentThisMonth(cardId) - getCardPaidThisMonth(cardId), 0);
@@ -553,8 +562,8 @@
                 const getCardBalance = (cardId) => {
                     const card = creditCards.value.find(c => c.id === cardId);
                     if(!card) return 0;
-                    const allTimeSpent = transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
-                    const allTimePaid = transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
+                    const allTimeSpent = transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+                    const allTimePaid = transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                     const totalOwed = Math.max(allTimeSpent - allTimePaid, 0);
                     return card.limit - totalOwed;
                 };
@@ -572,8 +581,9 @@
 
                 const todayAverage = computed(() => livingRemainingThisMonth.value / daysLeft.value);
                 const expensePercentage = computed(() => {
-                    if(settings.value.livingBudget <= 0) return 0;
-                    return ((livingExpensesThisMonth.value / settings.value.livingBudget) * 100).toFixed(1);
+                    const budget = Number(settings.value.livingBudget) || 0;
+                    if(budget <= 0) return 0;
+                    return ((livingExpensesThisMonth.value / budget) * 100).toFixed(1);
                 });
 
                 const currentMonthString = computed(() => {
@@ -581,22 +591,22 @@
                     return `${d.getFullYear()}年${d.getMonth() + 1}月`;
                 });
 
-                // 首頁明細過濾：隱藏未來期數的帳款，只顯示本月與以前的，且依入帳日期新到舊排序
+                // 首頁明細過濾：隱藏未來期數的帳款，並依入帳日期排序
                 const visibleTransactions = computed(() => {
                     return transactions.value
                         .filter(t => !isFutureTransaction(t.date))
-                        .sort((a, b) => new Date(b.date) - new Date(a.date));
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
                 });
 
                 // 統計邏輯 (只算本月)
                 const categoryStats = computed(() => {
                     const expenses = transactions.value.filter(t => t.type === '支出' && isThisMonth(t.date));
-                    const total = expenses.reduce((sum, t) => sum + t.amount, 0);
+                    const total = expenses.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
                     if (total === 0) return [];
 
                     const sums = {};
                     expenses.forEach(t => {
-                        sums[t.category] = (sums[t.category] || 0) + t.amount;
+                        sums[t.category] = (sums[t.category] || 0) + (Number(t.amount) || 0);
                     });
 
                     let stats = Object.keys(sums).map(key => {
@@ -614,17 +624,22 @@
                 const getColorClass = (index) => colorClasses[index % colorClasses.length];
 
                 // 工具方法
-                const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
+                const formatMoney = (num) => {
+                    const validNum = Number(num) || 0;
+                    return '$' + Math.round(validNum).toLocaleString();
+                };
+                
                 const formatDateDisplay = (isoString) => {
                     if (!isoString) return '';
                     const d = new Date(isoString);
+                    if (isNaN(d.getTime())) return '';
                     if(d.getFullYear() !== currentYear) {
                         return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
                     }
                     return `${d.getMonth()+1}/${d.getDate()}`;
                 };
 
-                // ----- 記帳操作 (支援分期) -----
+                // ----- 記帳操作 (支援分期拆單並記錄原始消費日) -----
                 const saveTransaction = () => {
                     if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
                     if ((form.value.method === '信用卡' || form.value.type === '卡費繳款') && !form.value.cardId) {
@@ -633,7 +648,7 @@
                     
                     const totalAmount = Number(form.value.amount);
                     const installments = parseInt(form.value.installments) || 1;
-                    const purchaseDate = new Date(form.value.date + 'T00:00:00').toISOString(); // 真正的消費日
+                    const purchaseDate = new Date(form.value.date + 'T00:00:00').toISOString();
                     
                     if (form.value.type === '支出' && form.value.method === '信用卡' && installments > 1) {
                         const baseAmount = Math.floor(totalAmount / installments);
@@ -658,8 +673,8 @@
                                 cardId: form.value.cardId,
                                 note: form.value.note,
                                 installmentInfo: `${i+1}/${installments}期`,
-                                originalPurchaseDate: purchaseDate, // 記錄原本買的那一天
-                                date: targetDate.toISOString()      // 記錄這期入帳是哪一天
+                                originalPurchaseDate: purchaseDate,
+                                date: targetDate.toISOString()
                             });
                         }
                     } else {
@@ -769,21 +784,29 @@
                 watch(settings, (newVal) => localStorage.setItem('moneyApp_settings', JSON.stringify(newVal)), { deep: true });
                 watch(creditCards, (newVal) => localStorage.setItem('moneyApp_cards', JSON.stringify(newVal)), { deep: true });
 
+                // 安全的資料讀取，避免任何錯誤導致白畫面
                 onMounted(() => {
-                    const savedData = localStorage.getItem('moneyApp_data');
-                    if (savedData) transactions.value = JSON.parse(savedData);
-                    
-                    const savedSettings = localStorage.getItem('moneyApp_settings');
-                    if (savedSettings) settings.value = JSON.parse(savedSettings);
-
-                    const savedCards = localStorage.getItem('moneyApp_cards');
-                    if (savedCards) creditCards.value = JSON.parse(savedCards);
-                    
-                    transactions.value.forEach(t => {
-                        if (!t.originalPurchaseDate) {
-                            t.originalPurchaseDate = t.date;
+                    try {
+                        const savedData = localStorage.getItem('moneyApp_data');
+                        if (savedData) {
+                            let parsed = JSON.parse(savedData);
+                            // 幫舊資料補上必要欄位，並確保不會中斷
+                            transactions.value = parsed.map(t => ({
+                                ...t,
+                                originalPurchaseDate: t.originalPurchaseDate || t.date || new Date().toISOString()
+                            }));
                         }
-                    });
+                    } catch(e) { console.error('讀取紀錄失敗', e); }
+                    
+                    try {
+                        const savedSettings = localStorage.getItem('moneyApp_settings');
+                        if (savedSettings) settings.value = { ...settings.value, ...JSON.parse(savedSettings) };
+                    } catch(e) { console.error('讀取設定失敗', e); }
+
+                    try {
+                        const savedCards = localStorage.getItem('moneyApp_cards');
+                        if (savedCards) creditCards.value = JSON.parse(savedCards);
+                    } catch(e) { console.error('讀取信用卡失敗', e); }
                 });
 
                 return { currentTab, transactions, visibleTransactions, creditCards, settings, form, types, categories, methods,
@@ -795,11 +818,5 @@
             }
         }).mount('#app');
     </script>
-    <style>
-        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-        .animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
-    </style>
 </body>
 </html>

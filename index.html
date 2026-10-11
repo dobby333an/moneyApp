@@ -13,7 +13,7 @@
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         .safe-top { padding-top: env(safe-area-inset-top); }
         ::-webkit-scrollbar { display: none; }
-        input[type="text"], input[type="number"], input[type="datetime-local"], select { font-size: 16px; }
+        input[type="text"], input[type="number"], input[type="date"], select { font-size: 16px; }
     </style>
 </head>
 <body class="text-gray-900 h-screen flex flex-col overflow-hidden">
@@ -22,7 +22,7 @@
         <!-- 主要內容區 -->
         <main class="flex-1 overflow-y-auto safe-top pb-24">
             
-            <!-- ====== 1. 首頁 Dashboard (總覽 + 明細) ====== -->
+            <!-- ====== 1. 首頁 Dashboard ====== -->
             <div v-show="currentTab === 'home'" class="p-4 space-y-4">
                 <h1 class="text-2xl font-bold text-center mt-2">{{ currentMonthString }}</h1>
                 
@@ -85,7 +85,7 @@
                         <div class="flex flex-col">
                             <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : (t.type === '卡費繳款' ? '信用卡繳款' : t.type) }}</span>
                             <span class="text-xs text-gray-500">
-                                {{ formatDate(t.date) }} • 
+                                {{ formatDateDisplay(t.date) }} • 
                                 {{ t.method || '-' }} 
                                 <span v-if="t.cardId && getCardName(t.cardId)"> ({{ getCardName(t.cardId) }})</span>
                                 {{ t.note ? ' • '+t.note : '' }}
@@ -199,8 +199,8 @@
 
                     <!-- 日期與備註 -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">日期時間</label>
-                        <input type="datetime-local" v-model="form.date" 
+                        <label class="block text-sm font-bold text-gray-700 mb-2">日期</label>
+                        <input type="date" v-model="form.date" 
                                class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
                     </div>
 
@@ -216,7 +216,50 @@
                 </div>
             </div>
 
-            <!-- ====== 4. 設定頁面 ====== -->
+            <!-- ====== 4. 統計頁面 ====== -->
+            <div v-show="currentTab === 'stats'" class="p-4 space-y-4">
+                <h1 class="text-2xl font-bold mt-2 mb-4">每月統計</h1>
+                
+                <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+                    <h2 class="text-lg font-bold text-gray-800 text-center">本月總支出</h2>
+                    <p class="text-4xl font-black text-center text-red-500">{{ formatMoney(livingExpenses) }}</p>
+                    
+                    <div class="flex justify-between bg-gray-50 p-3 rounded-xl mt-4">
+                        <div class="text-center flex-1 border-r border-gray-200">
+                            <p class="text-xs text-gray-500 mb-1">信用卡消費</p>
+                            <p class="font-bold text-gray-800">{{ formatMoney(totalCardSpent) }}</p>
+                        </div>
+                        <div class="text-center flex-1">
+                            <p class="text-xs text-gray-500 mb-1">現金/轉帳</p>
+                            <p class="font-bold text-gray-800">{{ formatMoney(livingExpenses - totalCardSpent) }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-5 shadow-sm mt-4">
+                    <h2 class="text-lg font-bold text-gray-800 mb-4">分類統計</h2>
+                    
+                    <div v-if="categoryStats.length === 0" class="text-center text-gray-400 py-4">
+                        本月尚無支出紀錄
+                    </div>
+                    
+                    <div class="space-y-4" v-else>
+                        <div v-for="(stat, index) in categoryStats" :key="stat.name">
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="font-bold text-gray-700">{{ stat.name }}</span>
+                                <span class="font-bold text-gray-900">{{ formatMoney(stat.amount) }} ({{ stat.percentage }}%)</span>
+                            </div>
+                            <div class="w-full bg-gray-100 rounded-full h-2">
+                                <div class="h-2 rounded-full" 
+                                     :class="getColorClass(index)"
+                                     :style="`width: ${stat.percentage}%`"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== 5. 設定頁面 ====== -->
             <div v-show="currentTab === 'settings'" class="p-4 space-y-4">
                 <h1 class="text-2xl font-bold mt-2 mb-4">財務設定</h1>
                 
@@ -244,14 +287,14 @@
             
         </main>
 
-        <!-- ====== 底部導航列 ====== -->
+        <!-- ====== 底部導航列 (修改為 5 個圖示) ====== -->
         <nav class="absolute bottom-0 w-full bg-white border-t border-gray-200 safe-bottom z-40">
-            <div class="flex justify-around items-center h-16 px-2">
-                <button @click="currentTab = 'home'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
+            <div class="flex justify-between items-center h-16 px-1">
+                <button @click="currentTab = 'home'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
                     <span class="text-xl">🏠</span>
                     <span class="text-[10px] font-medium mt-1">總覽</span>
                 </button>
-                <button @click="currentTab = 'cards'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'cards' ? 'text-blue-600' : 'text-gray-400'">
+                <button @click="currentTab = 'cards'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'cards' ? 'text-blue-600' : 'text-gray-400'">
                     <span class="text-xl">💳</span>
                     <span class="text-[10px] font-medium mt-1">信用卡</span>
                 </button>
@@ -263,7 +306,11 @@
                     </button>
                 </div>
                 
-                <button @click="currentTab = 'settings'" class="flex flex-col items-center justify-center w-16" :class="currentTab === 'settings' ? 'text-blue-600' : 'text-gray-400'">
+                <button @click="currentTab = 'stats'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'stats' ? 'text-blue-600' : 'text-gray-400'">
+                    <span class="text-xl">📊</span>
+                    <span class="text-[10px] font-medium mt-1">統計</span>
+                </button>
+                <button @click="currentTab = 'settings'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'settings' ? 'text-blue-600' : 'text-gray-400'">
                     <span class="text-xl">⚙️</span>
                     <span class="text-[10px] font-medium mt-1">設定</span>
                 </button>
@@ -314,8 +361,9 @@
                 </template>
 
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">日期時間</label>
-                    <input type="datetime-local" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                    <label class="block text-sm font-bold text-gray-700 mb-1">日期</label>
+                    <!-- 編輯時也改為純日期 -->
+                    <input type="date" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1">備註</label>
@@ -378,27 +426,32 @@
                 const settings = ref({
                     income: 67000,
                     fixedExpenses: 40000,
-                    livingBudget: 30000 // 取消連動後，設定一個合理的預設值
+                    livingBudget: 30000
                 });
                 
-                // 將 ISO 日期轉為 input[type="datetime-local"] 可讀取的格式
-                const toLocalDatetimeString = (dateObjOrString) => {
+                // 產生 input[type="date"] 支援的格式 (YYYY-MM-DD)
+                const toLocalDateString = (dateObjOrString) => {
                     const d = new Date(dateObjOrString);
-                    const tzOffset = d.getTimezoneOffset() * 60000;
-                    return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
                 };
 
                 const types = ['支出', '收入', '卡費繳款'];
                 const categories = ['🍚 餐飲', '🛒 日用', '🚗 交通', '🎮 娛樂', '🛍 購物', '👨‍👩‍👧 家庭', '🏠 房租', '📦 其他'];
                 const methods = ['現金', '信用卡', '轉帳'];
                 
-                // 表單加入預設日期為當下
-                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '', cardId: '', date: toLocalDatetimeString(new Date()) });
+                // 預設日期為今天
+                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '', cardId: '', date: toLocalDateString(new Date()) });
                 const isEditing = ref(false);
                 const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '' });
 
                 const isCardModalOpen = ref(false);
                 const cardForm = ref({ id: null, name: '', limit: '', billingDay: '', dueDay: '' });
+
+                // 顏色庫 (統計圖表使用)
+                const colorClasses = ['bg-blue-500', 'bg-red-400', 'bg-yellow-400', 'bg-green-500', 'bg-purple-500', 'bg-pink-400', 'bg-indigo-400', 'bg-orange-400'];
 
                 watch(() => form.value.method, (newVal) => {
                     if (newVal === '信用卡' && creditCards.value.length > 0 && !form.value.cardId) {
@@ -416,7 +469,6 @@
                     return transactions.value.filter(t => t.type === '支出').reduce((sum, t) => sum + t.amount, 0);
                 });
 
-                // 生活費剩餘完全看設定值
                 const livingRemaining = computed(() => settings.value.livingBudget - livingExpenses.value);
                 
                 const totalCardSpent = computed(() => {
@@ -467,10 +519,41 @@
                     return [...transactions.value].sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
 
+                // ----- 統計邏輯 -----
+                const categoryStats = computed(() => {
+                    const expenses = transactions.value.filter(t => t.type === '支出');
+                    const total = livingExpenses.value;
+                    if (total === 0) return [];
+
+                    // 加總各分類
+                    const sums = {};
+                    expenses.forEach(t => {
+                        sums[t.category] = (sums[t.category] || 0) + t.amount;
+                    });
+
+                    // 轉成陣列並排序 (金額大到小)
+                    let stats = Object.keys(sums).map(key => {
+                        return {
+                            name: key,
+                            amount: sums[key],
+                            percentage: ((sums[key] / total) * 100).toFixed(1)
+                        };
+                    });
+                    
+                    stats.sort((a, b) => b.amount - a.amount);
+                    return stats;
+                });
+
+                const getColorClass = (index) => {
+                    return colorClasses[index % colorClasses.length];
+                };
+
+                // ----- 工具方法 -----
                 const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
-                const formatDate = (isoString) => {
+                // 顯示時，不再顯示時間，只顯示日期 MM/DD
+                const formatDateDisplay = (isoString) => {
                     const d = new Date(isoString);
-                    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                    return `${d.getMonth()+1}/${d.getDate()}`;
                 };
 
                 // ----- 記帳操作 -----
@@ -488,17 +571,18 @@
                         method: form.value.type === '支出' ? form.value.method : null,
                         cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
                         note: form.value.note,
-                        date: new Date(form.value.date).toISOString() // 採用使用者設定的時間
+                        // 儲存為選定日期的午夜時間
+                        date: new Date(form.value.date + 'T00:00:00').toISOString() 
                     });
                     
                     form.value.amount = '';
                     form.value.note = '';
-                    form.value.date = toLocalDatetimeString(new Date()); // 重置為當前時間
+                    form.value.date = toLocalDateString(new Date()); 
                     currentTab.value = 'home';
                 };
 
                 const openEditModal = (t) => {
-                    editForm.value = { ...t, date: toLocalDatetimeString(t.date) };
+                    editForm.value = { ...t, date: toLocalDateString(t.date) };
                     isEditing.value = true;
                 };
 
@@ -513,7 +597,7 @@
                             method: editForm.value.method,
                             cardId: (editForm.value.method === '信用卡' || editForm.value.type === '卡費繳款') ? editForm.value.cardId : null,
                             note: editForm.value.note,
-                            date: new Date(editForm.value.date).toISOString()
+                            date: new Date(editForm.value.date + 'T00:00:00').toISOString()
                         };
                     }
                     isEditing.value = false;
@@ -590,10 +674,11 @@
                 });
 
                 return { currentTab, transactions, creditCards, settings, form, types, categories, methods,
-                         livingRemaining, totalCardSpent, totalCardDue, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         sortedTransactions, formatMoney, formatDate, saveTransaction, clearData,
+                         livingRemaining, livingExpenses, totalCardSpent, totalCardDue, todayAverage, daysLeft, expensePercentage, currentMonthString,
+                         sortedTransactions, formatMoney, formatDateDisplay, saveTransaction, clearData,
                          isEditing, editForm, openEditModal, saveEdit, deleteTransaction,
-                         isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDue, getCardBalance, getCardName };
+                         isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDue, getCardBalance, getCardName,
+                         categoryStats, getColorClass };
             }
         }).mount('#app');
     </script>

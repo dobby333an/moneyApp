@@ -28,7 +28,7 @@
                 
                 <!-- 財務總覽卡片 -->
                 <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-                    <h2 class="text-lg font-bold text-gray-800">財務總覽</h2>
+                    <h2 class="text-lg font-bold text-gray-800">本月財務總覽</h2>
                     <hr class="border-gray-100">
                     
                     <div class="flex justify-between items-center text-sm">
@@ -36,12 +36,12 @@
                         <span class="font-medium text-gray-800">{{ formatMoney(settings.income) }}</span>
                     </div>
                     <div class="flex justify-between items-center text-sm">
-                        <span class="text-gray-500">💳 信用卡已消費</span>
-                        <span class="font-medium text-gray-800">{{ formatMoney(totalCardSpent) }}</span>
+                        <span class="text-gray-500">💳 信用卡已消費 (本月)</span>
+                        <span class="font-medium text-gray-800">{{ formatMoney(totalCardSpentThisMonth) }}</span>
                     </div>
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-500">💳 本月待繳卡費</span>
-                        <span class="font-bold" :class="totalCardDue > 0 ? 'text-red-500' : 'text-green-500'">{{ formatMoney(totalCardDue) }}</span>
+                        <span class="font-bold" :class="totalCardDueThisMonth > 0 ? 'text-red-500' : 'text-green-500'">{{ formatMoney(totalCardDueThisMonth) }}</span>
                     </div>
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-500">🏠 固定支出</span>
@@ -51,8 +51,8 @@
                     <hr class="border-gray-100">
                     
                     <div class="flex justify-between items-center text-lg">
-                        <span class="font-bold text-gray-800">🍚 生活費剩餘</span>
-                        <span class="font-bold" :class="livingRemaining < 0 ? 'text-red-600' : 'text-green-600'">{{ formatMoney(livingRemaining) }}</span>
+                        <span class="font-bold text-gray-800">🍚 生活費剩餘 (本月)</span>
+                        <span class="font-bold" :class="livingRemainingThisMonth < 0 ? 'text-red-600' : 'text-green-600'">{{ formatMoney(livingRemainingThisMonth) }}</span>
                     </div>
                     
                     <div class="flex justify-between items-center bg-blue-50 rounded-xl p-3 mt-2">
@@ -76,15 +76,19 @@
                 </div>
 
                 <!-- 交易紀錄 (明細) -->
-                <h2 class="text-xl font-bold text-gray-800 mt-6 mb-2 ml-1">交易紀錄</h2>
+                <h2 class="text-xl font-bold text-gray-800 mt-6 mb-2 ml-1">所有紀錄 (含未來分期)</h2>
                 <div class="bg-white rounded-2xl p-2 shadow-sm mb-6">
                     <div v-if="transactions.length === 0" class="p-8 text-center text-gray-400">尚無任何紀錄</div>
                     
                     <div v-for="t in sortedTransactions" :key="t.id" @click="openEditModal(t)" 
-                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors">
+                         class="flex justify-between items-center p-4 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer transition-colors"
+                         :class="isFutureTransaction(t.date) ? 'opacity-50 bg-gray-50' : ''">
                         <div class="flex flex-col">
-                            <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : (t.type === '卡費繳款' ? '信用卡繳款' : t.type) }}</span>
-                            <span class="text-xs text-gray-500">
+                            <div class="flex items-center gap-1">
+                                <span class="font-bold text-gray-800">{{ t.type === '支出' ? t.category : (t.type === '卡費繳款' ? '信用卡繳款' : t.type) }}</span>
+                                <span v-if="t.installmentInfo" class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{{ t.installmentInfo }}</span>
+                            </div>
+                            <span class="text-xs text-gray-500 mt-0.5">
                                 {{ formatDateDisplay(t.date) }} • 
                                 {{ t.method || '-' }} 
                                 <span v-if="t.cardId && getCardName(t.cardId)"> ({{ getCardName(t.cardId) }})</span>
@@ -120,12 +124,12 @@
                     
                     <div class="flex justify-between items-end">
                         <div class="space-y-1">
-                            <p class="text-xs text-gray-400">本期待繳</p>
-                            <p class="text-2xl font-black text-red-300">{{ formatMoney(getCardDue(card.id)) }}</p>
+                            <p class="text-xs text-gray-400">本期待繳 (含本月分期)</p>
+                            <p class="text-2xl font-black text-red-300">{{ formatMoney(getCardDueThisMonth(card.id)) }}</p>
                             <p class="text-xs text-gray-400 mt-2">結帳: {{ card.billingDay }}日 | 繳費: {{ card.dueDay }}日</p>
                         </div>
                         <div class="text-right space-y-1">
-                            <p class="text-xs text-gray-400">剩餘可用額度</p>
+                            <p class="text-xs text-gray-400">剩餘可用額度 (扣除所有分期)</p>
                             <p class="text-lg font-bold">{{ formatMoney(getCardBalance(card.id)) }}</p>
                             <p class="text-xs text-gray-400 mt-2">總額度: {{ formatMoney(card.limit) }}</p>
                         </div>
@@ -148,7 +152,9 @@
 
                     <!-- 金額輸入 -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">金額</label>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">
+                            金額 <span v-if="form.method === '信用卡' && form.installments > 1" class="text-blue-600 font-normal ml-2">(總金額)</span>
+                        </label>
                         <input type="number" inputmode="decimal" v-model="form.amount" placeholder="0" 
                                class="w-full text-4xl font-bold bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
                     </div>
@@ -175,12 +181,27 @@
                                 </button>
                             </div>
                             
-                            <div v-if="form.method === '信用卡'" class="animate-fade-in">
-                                <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold mt-1">
+                            <div v-if="form.method === '信用卡'" class="animate-fade-in space-y-2 mt-2">
+                                <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
                                     <option disabled value="">請選擇信用卡</option>
                                     <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }}</option>
                                 </select>
-                                <p v-if="creditCards.length === 0" class="text-xs text-red-500 mt-1">請先至「信用卡」分頁新增卡片</p>
+                                <p v-if="creditCards.length === 0" class="text-xs text-red-500">請先至「信用卡」分頁新增卡片</p>
+                                
+                                <!-- 分期選項 -->
+                                <div class="flex items-center gap-2 mt-2">
+                                    <label class="text-sm font-bold text-gray-700 whitespace-nowrap">分期：</label>
+                                    <select v-model="form.installments" class="flex-1 bg-gray-50 p-2 rounded-xl border-0 text-sm">
+                                        <option value="1">無分期 (一次付清)</option>
+                                        <option value="3">3 期</option>
+                                        <option value="6">6 期</option>
+                                        <option value="9">9 期</option>
+                                        <option value="12">12 期</option>
+                                    </select>
+                                </div>
+                                <p v-if="form.installments > 1 && form.amount" class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1">
+                                    💡 系統將自動拆成 {{ form.installments }} 筆，每期約 {{ formatMoney(form.amount / form.installments) }}
+                                </p>
                             </div>
                         </div>
                     </template>
@@ -191,7 +212,7 @@
                             <label class="block text-sm font-bold text-gray-700 mb-2">繳納哪張信用卡？</label>
                             <select v-model="form.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
                                 <option disabled value="">請選擇信用卡</option>
-                                <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }} (待繳: {{ formatMoney(getCardDue(card.id)) }})</option>
+                                <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }} (本期待繳: {{ formatMoney(getCardDueThisMonth(card.id)) }})</option>
                             </select>
                             <p v-if="creditCards.length === 0" class="text-xs text-red-500 mt-1">請先至「信用卡」分頁新增卡片</p>
                         </div>
@@ -199,14 +220,14 @@
 
                     <!-- 日期與備註 -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-2">日期</label>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">首期日期</label>
                         <input type="date" v-model="form.date" 
                                class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
                     </div>
 
                     <div>
                         <label class="block text-sm font-bold text-gray-700 mb-2">備註 (選填)</label>
-                        <input type="text" v-model="form.note" placeholder="例如：跟朋友聚餐" 
+                        <input type="text" v-model="form.note" placeholder="例如：買手機" 
                                class="w-full text-md bg-gray-50 p-3 rounded-xl border-0 focus:ring-2 focus:ring-blue-500">
                     </div>
 
@@ -218,20 +239,20 @@
 
             <!-- ====== 4. 統計頁面 ====== -->
             <div v-show="currentTab === 'stats'" class="p-4 space-y-4">
-                <h1 class="text-2xl font-bold mt-2 mb-4">每月統計</h1>
+                <h1 class="text-2xl font-bold mt-2 mb-4">本月統計</h1>
                 
                 <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-                    <h2 class="text-lg font-bold text-gray-800 text-center">本月總支出</h2>
-                    <p class="text-4xl font-black text-center text-red-500">{{ formatMoney(livingExpenses) }}</p>
+                    <h2 class="text-lg font-bold text-gray-800 text-center">本月總支出 (含本月分期)</h2>
+                    <p class="text-4xl font-black text-center text-red-500">{{ formatMoney(livingExpensesThisMonth) }}</p>
                     
                     <div class="flex justify-between bg-gray-50 p-3 rounded-xl mt-4">
                         <div class="text-center flex-1 border-r border-gray-200">
                             <p class="text-xs text-gray-500 mb-1">信用卡消費</p>
-                            <p class="font-bold text-gray-800">{{ formatMoney(totalCardSpent) }}</p>
+                            <p class="font-bold text-gray-800">{{ formatMoney(totalCardSpentThisMonth) }}</p>
                         </div>
                         <div class="text-center flex-1">
                             <p class="text-xs text-gray-500 mb-1">現金/轉帳</p>
-                            <p class="font-bold text-gray-800">{{ formatMoney(livingExpenses - totalCardSpent) }}</p>
+                            <p class="font-bold text-gray-800">{{ formatMoney(livingExpensesThisMonth - totalCardSpentThisMonth) }}</p>
                         </div>
                     </div>
                 </div>
@@ -287,7 +308,7 @@
             
         </main>
 
-        <!-- ====== 底部導航列 (修改為 5 個圖示) ====== -->
+        <!-- ====== 底部導航列 ====== -->
         <nav class="absolute bottom-0 w-full bg-white border-t border-gray-200 safe-bottom z-40">
             <div class="flex justify-between items-center h-16 px-1">
                 <button @click="currentTab = 'home'" class="flex flex-col items-center justify-center w-14" :class="currentTab === 'home' ? 'text-blue-600' : 'text-gray-400'">
@@ -324,7 +345,9 @@
                     <h2 class="text-xl font-bold">修改紀錄</h2>
                     <button @click="isEditing = false" class="text-gray-400 bg-gray-100 rounded-full w-8 h-8 flex justify-center items-center font-bold">✕</button>
                 </div>
-                
+                <p v-if="editForm.installmentInfo" class="text-xs text-blue-600 bg-blue-50 p-2 rounded">
+                    這是一筆分期消費，目前修改只會影響此單期。如需刪除整筆分期，請手動刪除各期紀錄。
+                </p>
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1">金額</label>
                     <input type="number" inputmode="decimal" v-model="editForm.amount" class="w-full text-2xl font-bold bg-gray-50 p-3 rounded-xl border-0">
@@ -339,13 +362,13 @@
                     </div>
                     <div>
                         <label class="block text-sm font-bold text-gray-700 mb-1">支付方式</label>
-                        <select v-model="editForm.method" class="w-full bg-gray-50 p-3 rounded-xl border-0">
+                        <select v-model="editForm.method" class="w-full bg-gray-50 p-3 rounded-xl border-0" :disabled="!!editForm.installmentInfo">
                             <option v-for="method in methods" :key="method" :value="method">{{ method }}</option>
                         </select>
                     </div>
                     <div v-if="editForm.method === '信用卡'">
                         <label class="block text-sm font-bold text-gray-700 mb-1">信用卡</label>
-                        <select v-model="editForm.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold">
+                        <select v-model="editForm.cardId" class="w-full bg-blue-50 text-blue-800 p-3 rounded-xl border-0 font-bold" :disabled="!!editForm.installmentInfo">
                             <option v-for="card in creditCards" :key="card.id" :value="card.id">{{ card.name }}</option>
                         </select>
                     </div>
@@ -362,7 +385,6 @@
 
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1">日期</label>
-                    <!-- 編輯時也改為純日期 -->
                     <input type="date" v-model="editForm.date" class="w-full bg-gray-50 p-3 rounded-xl border-0">
                 </div>
                 <div>
@@ -371,7 +393,7 @@
                 </div>
 
                 <div class="flex gap-3 pt-2">
-                    <button @click="deleteTransaction" class="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">刪除</button>
+                    <button @click="deleteTransaction" class="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">刪除此期</button>
                     <button @click="saveEdit" class="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl">儲存</button>
                 </div>
             </div>
@@ -429,7 +451,6 @@
                     livingBudget: 30000
                 });
                 
-                // 產生 input[type="date"] 支援的格式 (YYYY-MM-DD)
                 const toLocalDateString = (dateObjOrString) => {
                     const d = new Date(dateObjOrString);
                     const year = d.getFullYear();
@@ -442,57 +463,90 @@
                 const categories = ['🍚 餐飲', '🛒 日用', '🚗 交通', '🎮 娛樂', '🛍 購物', '👨‍👩‍👧 家庭', '🏠 房租', '📦 其他'];
                 const methods = ['現金', '信用卡', '轉帳'];
                 
-                // 預設日期為今天
-                const form = ref({ type: '支出', amount: '', category: '🍚 餐飲', method: '現金', note: '', cardId: '', date: toLocalDateString(new Date()) });
+                const form = ref({ type: '支出', amount: '', category: '🛍 購物', method: '現金', note: '', cardId: '', date: toLocalDateString(new Date()), installments: "1" });
                 const isEditing = ref(false);
-                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '' });
+                const editForm = ref({ id: null, type: '', amount: '', category: '', method: '', note: '', date: '', cardId: '', installmentInfo: '' });
 
                 const isCardModalOpen = ref(false);
                 const cardForm = ref({ id: null, name: '', limit: '', billingDay: '', dueDay: '' });
 
-                // 顏色庫 (統計圖表使用)
                 const colorClasses = ['bg-blue-500', 'bg-red-400', 'bg-yellow-400', 'bg-green-500', 'bg-purple-500', 'bg-pink-400', 'bg-indigo-400', 'bg-orange-400'];
 
                 watch(() => form.value.method, (newVal) => {
                     if (newVal === '信用卡' && creditCards.value.length > 0 && !form.value.cardId) {
                         form.value.cardId = creditCards.value[0].id;
                     }
+                    if (newVal !== '信用卡') {
+                        form.value.installments = "1";
+                    }
                 });
                 watch(() => form.value.type, (newVal) => {
                     if (newVal === '卡費繳款' && creditCards.value.length > 0 && !form.value.cardId) {
                         form.value.cardId = creditCards.value[0].id;
                     }
+                    if (newVal !== '支出') {
+                        form.value.installments = "1";
+                    }
                 });
 
-                // ----- 核心計算邏輯 -----
-                const livingExpenses = computed(() => {
-                    return transactions.value.filter(t => t.type === '支出').reduce((sum, t) => sum + t.amount, 0);
+                // ----- 日期判斷邏輯 (關鍵：區分本月與未來) -----
+                const currentYear = new Date().getFullYear();
+                const currentMonth = new Date().getMonth();
+
+                const isThisMonth = (isoDateString) => {
+                    const d = new Date(isoDateString);
+                    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+                };
+
+                const isFutureTransaction = (isoDateString) => {
+                    const d = new Date(isoDateString);
+                    return d.getFullYear() > currentYear || (d.getFullYear() === currentYear && d.getMonth() > currentMonth);
+                };
+
+                // ----- 核心計算邏輯 (修改為只算本月或以前，忽略未來的分期) -----
+                const livingExpensesThisMonth = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '支出' && !isFutureTransaction(t.date))
+                        .reduce((sum, t) => sum + t.amount, 0);
                 });
 
-                const livingRemaining = computed(() => settings.value.livingBudget - livingExpenses.value);
+                const livingRemainingThisMonth = computed(() => settings.value.livingBudget - livingExpensesThisMonth.value);
                 
-                const totalCardSpent = computed(() => {
-                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡').reduce((sum, t) => sum + t.amount, 0);
+                const totalCardSpentThisMonth = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '支出' && t.method === '信用卡' && !isFutureTransaction(t.date))
+                        .reduce((sum, t) => sum + t.amount, 0);
                 });
-                const totalCardPaid = computed(() => {
-                    return transactions.value.filter(t => t.type === '卡費繳款').reduce((sum, t) => sum + t.amount, 0);
+                
+                const totalCardPaidThisMonth = computed(() => {
+                    return transactions.value
+                        .filter(t => t.type === '卡費繳款' && !isFutureTransaction(t.date))
+                        .reduce((sum, t) => sum + t.amount, 0);
                 });
-                const totalCardDue = computed(() => Math.max(totalCardSpent.value - totalCardPaid.value, 0));
+                
+                const totalCardDueThisMonth = computed(() => Math.max(totalCardSpentThisMonth.value - totalCardPaidThisMonth.value, 0));
 
-                const getCardSpent = (cardId) => {
-                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
+                // 卡片管理：特定卡片的本期待繳 (只算本月與以前)
+                const getCardSpentThisMonth = (cardId) => {
+                    return transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + t.amount, 0);
                 };
-                const getCardPaid = (cardId) => {
-                    return transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
+                const getCardPaidThisMonth = (cardId) => {
+                    return transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId && !isFutureTransaction(t.date)).reduce((sum, t) => sum + t.amount, 0);
                 };
-                const getCardDue = (cardId) => {
-                    return Math.max(getCardSpent(cardId) - getCardPaid(cardId), 0);
+                const getCardDueThisMonth = (cardId) => {
+                    return Math.max(getCardSpentThisMonth(cardId) - getCardPaidThisMonth(cardId), 0);
                 };
+
+                // 卡片管理：額度扣除 (算入所有未來的分期，因為額度已經被佔用了)
                 const getCardBalance = (cardId) => {
                     const card = creditCards.value.find(c => c.id === cardId);
                     if(!card) return 0;
-                    return card.limit - getCardDue(cardId);
+                    const allTimeSpent = transactions.value.filter(t => t.type === '支出' && t.method === '信用卡' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
+                    const allTimePaid = transactions.value.filter(t => t.type === '卡費繳款' && t.cardId === cardId).reduce((sum, t) => sum + t.amount, 0);
+                    const totalOwed = Math.max(allTimeSpent - allTimePaid, 0);
+                    return card.limit - totalOwed;
                 };
+
                 const getCardName = (cardId) => {
                     const card = creditCards.value.find(c => c.id === cardId);
                     return card ? card.name : '';
@@ -504,34 +558,32 @@
                     return Math.max(lastDay - today.getDate() + 1, 1);
                 });
 
-                const todayAverage = computed(() => livingRemaining.value / daysLeft.value);
+                const todayAverage = computed(() => livingRemainingThisMonth.value / daysLeft.value);
                 const expensePercentage = computed(() => {
                     if(settings.value.livingBudget <= 0) return 0;
-                    return ((livingExpenses.value / settings.value.livingBudget) * 100).toFixed(1);
+                    return ((livingExpensesThisMonth.value / settings.value.livingBudget) * 100).toFixed(1);
                 });
 
                 const currentMonthString = computed(() => {
                     const d = new Date();
-                    return `${d.getFullYear()}年${d.getMonth() + 1}月財務狀況`;
+                    return `${d.getFullYear()}年${d.getMonth() + 1}月`;
                 });
 
                 const sortedTransactions = computed(() => {
                     return [...transactions.value].sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
 
-                // ----- 統計邏輯 -----
+                // ----- 統計邏輯 (只算本月) -----
                 const categoryStats = computed(() => {
-                    const expenses = transactions.value.filter(t => t.type === '支出');
-                    const total = livingExpenses.value;
+                    const expenses = transactions.value.filter(t => t.type === '支出' && isThisMonth(t.date));
+                    const total = expenses.reduce((sum, t) => sum + t.amount, 0);
                     if (total === 0) return [];
 
-                    // 加總各分類
                     const sums = {};
                     expenses.forEach(t => {
                         sums[t.category] = (sums[t.category] || 0) + t.amount;
                     });
 
-                    // 轉成陣列並排序 (金額大到小)
                     let stats = Object.keys(sums).map(key => {
                         return {
                             name: key,
@@ -544,40 +596,77 @@
                     return stats;
                 });
 
-                const getColorClass = (index) => {
-                    return colorClasses[index % colorClasses.length];
-                };
+                const getColorClass = (index) => colorClasses[index % colorClasses.length];
 
                 // ----- 工具方法 -----
                 const formatMoney = (num) => '$' + Number(Math.round(num)).toLocaleString();
-                // 顯示時，不再顯示時間，只顯示日期 MM/DD
                 const formatDateDisplay = (isoString) => {
                     const d = new Date(isoString);
+                    // 如果不是今年，顯示年份
+                    if(d.getFullYear() !== currentYear) {
+                        return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+                    }
                     return `${d.getMonth()+1}/${d.getDate()}`;
                 };
 
-                // ----- 記帳操作 -----
+                // ----- 記帳操作 (支援分期拆單) -----
                 const saveTransaction = () => {
                     if (!form.value.amount || form.value.amount <= 0) return alert('請輸入金額！');
                     if ((form.value.method === '信用卡' || form.value.type === '卡費繳款') && !form.value.cardId) {
                         return alert('請選擇信用卡！');
                     }
                     
-                    transactions.value.push({
-                        id: Date.now(),
-                        type: form.value.type,
-                        amount: Number(form.value.amount),
-                        category: form.value.category,
-                        method: form.value.type === '支出' ? form.value.method : null,
-                        cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
-                        note: form.value.note,
-                        // 儲存為選定日期的午夜時間
-                        date: new Date(form.value.date + 'T00:00:00').toISOString() 
-                    });
+                    const totalAmount = Number(form.value.amount);
+                    const installments = parseInt(form.value.installments) || 1;
+                    
+                    if (form.value.type === '支出' && form.value.method === '信用卡' && installments > 1) {
+                        // 處理分期邏輯
+                        const baseAmount = Math.floor(totalAmount / installments);
+                        const remainder = totalAmount - (baseAmount * installments);
+                        const startDate = new Date(form.value.date + 'T00:00:00');
+                        const batchId = Date.now().toString(); // 用來標記這批分期是同一次建立的
+
+                        for (let i = 0; i < installments; i++) {
+                            // 計算這期的金額 (餘數加在第一期)
+                            let currentAmount = baseAmount;
+                            if (i === 0) currentAmount += remainder;
+
+                            // 計算這期的日期 (每期加一個月)
+                            let targetDate = new Date(startDate);
+                            targetDate.setMonth(startDate.getMonth() + i);
+
+                            transactions.value.push({
+                                id: Date.now() + i, // 確保 ID 唯一
+                                batchId: batchId,
+                                type: form.value.type,
+                                amount: currentAmount,
+                                category: form.value.category,
+                                method: form.value.method,
+                                cardId: form.value.cardId,
+                                note: form.value.note,
+                                installmentInfo: `${i+1}/${installments}期`,
+                                date: targetDate.toISOString()
+                            });
+                        }
+                    } else {
+                        // 一般單筆紀錄
+                        transactions.value.push({
+                            id: Date.now(),
+                            type: form.value.type,
+                            amount: totalAmount,
+                            category: form.value.category,
+                            method: form.value.type === '支出' ? form.value.method : null,
+                            cardId: (form.value.method === '信用卡' || form.value.type === '卡費繳款') ? form.value.cardId : null,
+                            note: form.value.note,
+                            installmentInfo: null,
+                            date: new Date(form.value.date + 'T00:00:00').toISOString()
+                        });
+                    }
                     
                     form.value.amount = '';
                     form.value.note = '';
                     form.value.date = toLocalDateString(new Date()); 
+                    form.value.installments = "1";
                     currentTab.value = 'home';
                 };
 
@@ -674,10 +763,10 @@
                 });
 
                 return { currentTab, transactions, creditCards, settings, form, types, categories, methods,
-                         livingRemaining, livingExpenses, totalCardSpent, totalCardDue, todayAverage, daysLeft, expensePercentage, currentMonthString,
-                         sortedTransactions, formatMoney, formatDateDisplay, saveTransaction, clearData,
+                         livingRemainingThisMonth, livingExpensesThisMonth, totalCardSpentThisMonth, totalCardDueThisMonth, todayAverage, daysLeft, expensePercentage, currentMonthString,
+                         sortedTransactions, isFutureTransaction, formatMoney, formatDateDisplay, saveTransaction, clearData,
                          isEditing, editForm, openEditModal, saveEdit, deleteTransaction,
-                         isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDue, getCardBalance, getCardName,
+                         isCardModalOpen, cardForm, openCardModal, saveCard, deleteCard, getCardDueThisMonth, getCardBalance, getCardName,
                          categoryStats, getColorClass };
             }
         }).mount('#app');
